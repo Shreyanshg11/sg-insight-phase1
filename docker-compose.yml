@@ -1,0 +1,40 @@
+# Local / self-hosted use: `docker compose up --build`, then open
+# http://localhost:8080. Frontend talks to the backend same-origin through
+# nginx's reverse proxy (see frontend/nginx.conf) — no CORS involved here.
+#
+# This is NOT what's used for the Render deployment described in the
+# README's Deployment section — Render's own static-site hosting replaces
+# this frontend container there (free, never spins down, no nginx needed).
+# This compose file is for anyone who wants to run/self-host both services
+# as containers directly.
+services:
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-5}
+      - CORS_ORIGINS=http://localhost:8080
+      - SG_INSIGHT_DATA_DIR=/app/data
+    volumes:
+      - sg-insight-data:/app/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ""  # empty = same-origin; nginx proxies /api/* to backend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  # Named volume, not a bind mount — survives `docker compose down` (but not
+  # `docker compose down -v`). This is where session_store.py's SQLite +
+  # per-version pickle files actually live between container restarts.
+  sg-insight-data:

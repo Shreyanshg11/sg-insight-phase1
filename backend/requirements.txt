@@ -1,0 +1,15 @@
+# Lower bounds set to the earliest release in each line with an official
+# Python 3.13 wheel on PyPI (numpy 2.1.0+, pandas 2.2.3+, scipy 1.14.1+,
+# scikit-learn 1.6.0+, pydantic 2.9.0+). All still work fine on 3.10-3.12.
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.6
+pandas>=2.2.3
+numpy>=2.1.0
+scipy>=1.14.1
+scikit-learn>=1.6.0
+python-multipart>=0.0.9
+openpyxl>=3.1.5
+pydantic>=2.9.0
+anthropic>=0.40.0
+reportlab>=4.2.0
+matplotlib>=3.9.0
