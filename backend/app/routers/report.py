@@ -1,8 +1,9 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from app.core.session_store import store
-from app.models.schemas import GenerateReportRequest
+from app.models.schemas import GenerateReportRequest, DraftReportPlanRequest, DraftReportPlanResponse
 from app.engines.report_engine import generate_report
+from app.engines.report_builder_engine import draft_report_plan
 
 router = APIRouter(prefix="/api/dataset", tags=["report"])
 
@@ -18,6 +19,28 @@ def _get_session(dataset_id: str):
     return session
 
 
+@router.post("/report/draft-plan", response_model=DraftReportPlanResponse)
+async def draft_report_plan_endpoint(req: DraftReportPlanRequest):
+    """
+    Smart Report Builder (session 13) — AI curation step. Returns a PLAN
+    (which sections, which analyses, why), never a rendered report; the
+    frontend shows this as an editable outline, and the actual report still
+    comes from POST /report once the user is happy with (or has adjusted)
+    this plan.
+    """
+    session = _get_session(req.dataset_id)
+    try:
+        plan = draft_report_plan(
+            df=session.current, goal_keywords=session.goal_keywords,
+            investigation_goal=session.investigation_goal,
+            available_analyses=[a.model_dump() for a in req.available_analyses],
+            user_request=req.user_request,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return DraftReportPlanResponse(**plan)
+
+
 @router.post("/report")
 async def generate_report_endpoint(req: GenerateReportRequest):
     """
@@ -26,6 +49,11 @@ async def generate_report_endpoint(req: GenerateReportRequest):
     own Analyst Notebook action log, EDA findings, pinned Dashboard charts)
     plus whatever analyses the user actually ran and chose to include via
     `included_analyses`. Never re-runs or invents an analysis on its own.
+
+    `section_order` (session 13): which sections to include and in what
+    order — omit for every section in the original default order (fully
+    backward compatible with report generation from before the Smart Report
+    Builder existed).
     """
     session = _get_session(req.dataset_id)
     if req.format not in _MEDIA_TYPES:
@@ -33,7 +61,7 @@ async def generate_report_endpoint(req: GenerateReportRequest):
 
     included = [a.model_dump() for a in req.included_analyses]
     try:
-        content = generate_report(session, req.format, included)
+        content = generate_report(session, req.format, included, req.section_order)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

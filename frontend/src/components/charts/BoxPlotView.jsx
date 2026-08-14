@@ -1,4 +1,4 @@
-export default function BoxPlotView({ groups }) {
+export default function BoxPlotView({ groups, onGroupClick }) {
   if (!groups || groups.length === 0) {
     return <p className="font-mono text-xs text-ink-500">No groups to plot.</p>;
   }
@@ -17,7 +17,14 @@ export default function BoxPlotView({ groups }) {
         {groups.map((g, i) => {
           const cx = pad + slotWidth * (i + 0.5);
           return (
-            <g key={i}>
+            <g
+              key={i}
+              className={onGroupClick ? "cursor-pointer" : ""}
+              onClick={onGroupClick ? () => onGroupClick(g) : undefined}
+            >
+              {onGroupClick && (
+                <rect x={cx - slotWidth / 2} y={pad} width={slotWidth} height={height - 2 * pad} fill="transparent" />
+              )}
               <line x1={cx} y1={scaleY(g.min)} x2={cx} y2={scaleY(g.max)} stroke="#8A93A6" strokeWidth={1} />
               <rect x={cx - boxWidth / 2} y={scaleY(g.q3)} width={boxWidth} height={Math.max(1, scaleY(g.q1) - scaleY(g.q3))}
                     fill="#E8A33D" fillOpacity={0.35} stroke="#E8A33D" />
@@ -36,6 +43,7 @@ export default function BoxPlotView({ groups }) {
           </span>
         ))}
       </div>
+      {onGroupClick && <p className="mt-1 font-mono text-[10px] text-ink-700">Click a group to filter to it.</p>}
     </div>
   );
 }

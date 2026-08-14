@@ -22,6 +22,14 @@ MAX_RATIO_CANDIDATE_COLUMNS = 6   # bounds ratio pair combinations to <= 15
 MAX_ONE_HOT_CARDINALITY = 15      # above this, one-hot would blow up column count
 MAX_LABEL_ENCODE_CARDINALITY = 50 # above this, label encoding is unlikely to be meaningful
 
+# Value tiers for FeatureRecommendation.value_tier — distinct from `confidence`
+# (confidence = "did the detection rule fire correctly"; value_tier = "is the
+# resulting feature likely to actually be worth having"). See per-category
+# classifiers below for the concrete rule behind each tier assignment.
+VALUE_TIERS = ("high_value", "situational", "risky", "redundant")
+
+REDUNDANCY_CORRELATION_THRESHOLD = 0.97  # near-duplicate of an existing column
+
 
 def _usable_numeric_columns(df: pd.DataFrame) -> list[str]:
     """Numeric columns that are actually continuous quantities — excludes ID-like
@@ -75,6 +83,112 @@ def _iqr_outlier_ratio(series: pd.Series) -> float:
     return float(((s < lower) | (s > upper)).mean())
 
 
+def _max_abs_correlation(new_series: pd.Series, df: pd.DataFrame, exclude_cols: list[str]) -> float:
+    """Highest |correlation| between a candidate new numeric feature and any
+    EXISTING numeric column not among its own source columns — used to flag a
+    suggestion as redundant when it would just duplicate information already
+    in the dataset."""
+    best = 0.0
+    for col in df.select_dtypes(include=[np.number]).columns:
+        if col in exclude_cols:
+            continue
+        other = df[col]
+        if other.dropna().nunique() <= 1:
+            continue
+        corr = new_series.corr(other)
+        if corr is not None and not pd.isna(corr):
+            best = max(best, abs(float(corr)))
+    return best
+
+
+# ---------------------------------------------------------------------------
+# Value classification — per category, a stated rule for high_value /
+# situational / risky / redundant, mirroring the "cite the numbers" convention
+# used for confidence and how_detected elsewhere in this app.
+# ---------------------------------------------------------------------------
+
+def _classify_date_features_value(valid_pct: float, parsed: pd.Series) -> tuple[str, str]:
+    distinct_dates = parsed.dropna().dt.date.nunique()
+    if valid_pct < 0.6:
+        return "risky", f"Only {round(valid_pct*100,1)}% of values parsed as dates — the majority of rows " \
+                         "would get missing date-part values."
+    if distinct_dates <= 1:
+        return "redundant", "Every parsed value falls on the same calendar date, so none of the extracted " \
+                             "parts (year/month/day/weekday) would vary — no discriminating signal added."
+    if valid_pct >= 0.9:
+        return "high_value", f"{round(valid_pct*100,1)}% parse rate and {distinct_dates} distinct dates " \
+                              "give the extracted parts real variation to work with."
+    return "situational", f"{round(valid_pct*100,1)}% parse rate is usable but not clean — worth trying, " \
+                           "review how the unparsed rows are handled downstream."
+
+
+def _classify_ratio_value(ratio_series: pd.Series, zero_pct: float, max_corr: float) -> tuple[str, str]:
+    if zero_pct > 0.15:
+        return "risky", f"{round(zero_pct*100,1)}% of rows have a zero denominator and would get a " \
+                         "missing ratio value — a meaningfully unstable feature at this rate."
+    dropped = ratio_series.dropna()
+    if dropped.empty or dropped.nunique() <= 1:
+        return "redundant", "The computed ratio is constant across all rows — it can't discriminate " \
+                             "between observations, so it adds no information."
+    if max_corr >= REDUNDANCY_CORRELATION_THRESHOLD:
+        return "redundant", f"This ratio correlates at |r|={round(max_corr,3)} with an existing column — " \
+                             "close to duplicating information already in the dataset."
+    if zero_pct < 0.05:
+        return "high_value", f"Only {round(zero_pct*100,1)}% undefined-denominator rows and no strong " \
+                              "correlation with an existing column — a genuinely new, mostly-complete signal."
+    return "situational", f"{round(zero_pct*100,1)}% undefined-denominator rate is moderate — usable, but " \
+                           "review whether the two columns are conceptually related before relying on it."
+
+
+def _classify_bucketing_value(distinct_buckets: int, outlier_ratio: float) -> tuple[str, str]:
+    if distinct_buckets < 4:
+        return "redundant", f"Quartile edges collapsed to only {distinct_buckets} distinct band(s) (heavy " \
+                             "ties in the data) — limited new information over the raw column."
+    if outlier_ratio > 0.05:
+        return "high_value", f"{round(outlier_ratio*100,1)}% IQR-outlier rate in the source column — " \
+                              "bucketing into equal-count bands reduces how much those extreme values can " \
+                              "distort tables/charts built on this feature."
+    return "situational", "A clean quartile split with no notable outlier pressure — a reasonable " \
+                           "discretization, but not clearly more useful than the raw numeric column."
+
+
+def _classify_scaling_value(outlier_ratio: float) -> tuple[str, str]:
+    if outlier_ratio > 0.15:
+        return "risky", f"{round(outlier_ratio*100,1)}% IQR-outlier rate — scaling (even the robust method " \
+                         "chosen here) reduces but doesn't remove the influence of that many outliers; " \
+                         "consider addressing them directly before relying on this feature."
+    return "high_value", "Numeric columns generally benefit from a consistent scale before distance- or " \
+                          "gradient-based methods; no unusually high outlier rate complicating that here."
+
+
+def _classify_encoding_value(action: str, cardinality: int) -> tuple[str, str]:
+    if action == "label_encode":
+        return "risky", f"Label encoding assigns an arbitrary 0-{cardinality-1} ordering to {cardinality} " \
+                         "categories with no inherent order — safe for tree-based methods, misleading for " \
+                         "linear/distance-based ones that would read the codes as a real numeric scale."
+    if cardinality <= 5:
+        return "high_value", f"Only {cardinality} distinct categories — one-hot encoding stays compact and " \
+                              "gives a clean, unambiguous numeric representation."
+    if cardinality <= 10:
+        return "situational", f"{cardinality} distinct categories is a moderate one-hot expansion — usable, " \
+                               "but check whether that many new columns are actually needed downstream."
+    return "risky", f"{cardinality} distinct categories means one-hot adds that many new, mostly-sparse " \
+                     "columns — reconsider whether this column needs encoding at all before applying."
+
+
+def _classify_log_transform_value(skew: float, transformed_skew: float) -> tuple[str, str]:
+    skew_reduction = skew - transformed_skew
+    if skew_reduction < 0.1:
+        return "redundant", f"log1p barely changed the skew ({round(skew,2)} -> {round(transformed_skew,2)}) " \
+                             "— the distortion likely comes from a few extreme values log1p doesn't fix, " \
+                             "not the overall shape."
+    if skew > 2:
+        return "high_value", f"Skew dropped from {round(skew,2)} to {round(transformed_skew,2)} — a " \
+                              "meaningful correction to a strongly distorted distribution."
+    return "situational", f"Skew dropped from {round(skew,2)} to {round(transformed_skew,2)} — a real but " \
+                           "modest improvement on a borderline-skewed column."
+
+
 # ---------------------------------------------------------------------------
 # Recommendations
 # ---------------------------------------------------------------------------
@@ -97,6 +211,7 @@ def generate_feature_recommendations(df: pd.DataFrame, goal_keywords: list[str] 
         new_col = f"{col}_year"
         sample_before = df[col].dropna().astype(str).head(5).tolist()
         sample_after = parsed.dropna().dt.year.head(5).tolist()
+        value_tier, value_tier_reason = _classify_date_features_value(valid_pct, parsed)
         recs.append(FeatureRecommendation(
             id=str(uuid.uuid4()),
             category="date_features",
@@ -122,6 +237,7 @@ def generate_feature_recommendations(df: pd.DataFrame, goal_keywords: list[str] 
                    "predictive on its own."],
             alternative_actions=["extract_year_month_only", "extract_is_weekend_only"],
             goal_relevant=_is_goal_relevant([col], goal_keywords),
+            value_tier=value_tier, value_tier_reason=value_tier_reason,
         ))
 
     # -- Ratios (numeric x numeric) --------------------------------------
@@ -147,6 +263,8 @@ def generate_feature_recommendations(df: pd.DataFrame, goal_keywords: list[str] 
                 continue
             new_col = f"{num_col}_per_{den_col}"
             confidence = round(max(0.5, 0.85 - zero_pct), 2)
+            max_corr = _max_abs_correlation(ratio_series, df, [num_col, den_col])
+            value_tier, value_tier_reason = _classify_ratio_value(ratio_series, zero_pct, max_corr)
             recs.append(FeatureRecommendation(
                 id=str(uuid.uuid4()),
                 category="ratio",
@@ -171,6 +289,7 @@ def generate_feature_recommendations(df: pd.DataFrame, goal_keywords: list[str] 
                        "Zero-denominator rows become missing rather than infinite."],
                 alternative_actions=[f"create_ratio({den_col}_per_{num_col})", "skip — columns unrelated"],
                 goal_relevant=_is_goal_relevant([num_col, den_col], goal_keywords),
+                value_tier=value_tier, value_tier_reason=value_tier_reason,
             ))
 
     # -- Bucketing (numeric -> quartile categories) ----------------------
@@ -186,6 +305,8 @@ def generate_feature_recommendations(df: pd.DataFrame, goal_keywords: list[str] 
         if distinct_buckets < 2:
             continue
         new_col = f"{col}_bucket"
+        outlier_ratio_for_col = _iqr_outlier_ratio(series)
+        value_tier, value_tier_reason = _classify_bucketing_value(distinct_buckets, outlier_ratio_for_col)
         recs.append(FeatureRecommendation(
             id=str(uuid.uuid4()),
             category="bucketing",
@@ -209,6 +330,7 @@ def generate_feature_recommendations(df: pd.DataFrame, goal_keywords: list[str] 
                    "re-run this after later pipeline steps rather than treating bands as fixed."],
             alternative_actions=["custom_bin_edges", "equal_width_bins"],
             goal_relevant=_is_goal_relevant([col], goal_keywords),
+            value_tier=value_tier, value_tier_reason=value_tier_reason,
         ))
 
     # -- Scaling / normalization ------------------------------------------
@@ -236,6 +358,7 @@ def generate_feature_recommendations(df: pd.DataFrame, goal_keywords: list[str] 
 
         new_col = f"{col}_scaled"
         all_alts = ["min_max_scale", "z_score_standardize", "robust_scale"]
+        value_tier, value_tier_reason = _classify_scaling_value(outlier_ratio)
         recs.append(FeatureRecommendation(
             id=str(uuid.uuid4()),
             category="scaling_normalization",
@@ -258,6 +381,7 @@ def generate_feature_recommendations(df: pd.DataFrame, goal_keywords: list[str] 
                    "these numbers blindly."],
             alternative_actions=[a for a in all_alts if a != action],
             goal_relevant=_is_goal_relevant([col], goal_keywords),
+            value_tier=value_tier, value_tier_reason=value_tier_reason,
         ))
 
     # -- Encoding (categorical -> numeric) ---------------------------------
@@ -295,6 +419,7 @@ def generate_feature_recommendations(df: pd.DataFrame, goal_keywords: list[str] 
         else:
             continue  # too high-cardinality for either method to be a sensible default
 
+        value_tier, value_tier_reason = _classify_encoding_value(action, cardinality)
         recs.append(FeatureRecommendation(
             id=str(uuid.uuid4()),
             category="encoding",
@@ -316,6 +441,7 @@ def generate_feature_recommendations(df: pd.DataFrame, goal_keywords: list[str] 
             risks=risks,
             alternative_actions=["one_hot_encode", "label_encode"],
             goal_relevant=_is_goal_relevant([col], goal_keywords),
+            value_tier=value_tier, value_tier_reason=value_tier_reason,
         ))
 
     # -- Log transform (right-skewed, non-negative numeric) ---------------
@@ -328,6 +454,7 @@ def generate_feature_recommendations(df: pd.DataFrame, goal_keywords: list[str] 
             continue
         new_col = f"{col}_log"
         transformed = np.log1p(series)
+        value_tier, value_tier_reason = _classify_log_transform_value(skew, float(transformed.skew()))
         recs.append(FeatureRecommendation(
             id=str(uuid.uuid4()),
             category="log_transform",
@@ -350,6 +477,7 @@ def generate_feature_recommendations(df: pd.DataFrame, goal_keywords: list[str] 
                    "the original column alongside this one for reporting."],
             alternative_actions=["sqrt_transform", "leave_untransformed"],
             goal_relevant=_is_goal_relevant([col], goal_keywords),
+            value_tier=value_tier, value_tier_reason=value_tier_reason,
         ))
 
     recs.sort(key=lambda r: not r.goal_relevant)

@@ -5,7 +5,7 @@ import LoadingState from "../ui/LoadingState";
 import ErrorState from "../ui/ErrorState";
 import EmptyState from "../ui/EmptyState";
 
-export default function EDADistribution({ datasetId, columns, selected, onSelect }) {
+export default function EDADistribution({ datasetId, columns, selected, onSelect, filters }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -14,11 +14,11 @@ export default function EDADistribution({ datasetId, columns, selected, onSelect
     if (!selected) return;
     setLoading(true);
     setError(null);
-    getEDADistribution(datasetId, selected)
+    getEDADistribution(datasetId, selected, filters)
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [datasetId, selected]);
+  }, [datasetId, selected, filters]);
 
   useEffect(() => { load(); }, [load]);
 

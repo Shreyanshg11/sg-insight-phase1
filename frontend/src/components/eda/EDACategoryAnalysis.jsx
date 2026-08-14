@@ -5,7 +5,7 @@ import BarChart from "./BarChart";
 import LoadingState from "../ui/LoadingState";
 import ErrorState from "../ui/ErrorState";
 
-export default function EDACategoryAnalysis({ datasetId, columns, selected, onSelect }) {
+export default function EDACategoryAnalysis({ datasetId, columns, selected, onSelect, filters }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -14,11 +14,11 @@ export default function EDACategoryAnalysis({ datasetId, columns, selected, onSe
     if (!selected) return;
     setLoading(true);
     setError(null);
-    getEDACategoryAnalysis(datasetId, selected)
+    getEDACategoryAnalysis(datasetId, selected, filters)
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [datasetId, selected]);
+  }, [datasetId, selected, filters]);
 
   useEffect(() => { load(); }, [load]);
 

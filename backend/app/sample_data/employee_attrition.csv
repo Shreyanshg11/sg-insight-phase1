@@ -1,0 +1,403 @@
+employee_id,department,job_role,age,years_at_company,monthly_income,satisfaction_score,overtime,attrition
+EMP-5000,Marketing,Manager,44,1,8929.89,3.0,No,No
+EMP-5001,Sales,Individual Contributor,32,9,5176.36,1.0,No,No
+EMP-5002,Engineering,VP,54,8,6046.39,3.0,No,No
+EMP-5003,Engineering,Individual Contributor,57,22,5619.57,2.0,No,No
+EMP-5004,Engineering,Individual Contributor,58,14,3122.96,2.0,No,No
+EMP-5005,Finance,Individual Contributor,38,12,7682.54,3.0,No,No
+EMP-5006,HR,Manager,56,22,6584.71,4.0,No,No
+EMP-5007,Marketing,Director,26,16,9669.29,2.0,No,No
+EMP-5008,Engineering,Individual Contributor,53,15,4688.95,3.0,No,No
+EMP-5009,sales,Individual Contributor,24,1,8895.13,1.0,No,Yes
+EMP-5010,Sales,Individual Contributor,56,19,9050.32,3.0,No,No
+EMP-5011,Engineering,Individual Contributor,35,19,6603.56,3.0,No,No
+EMP-5012,Engineering,Individual Contributor,52,13,2500.0,5.0,No,No
+EMP-5013,Marketing,Manager,52,2,5372.35,2.0,No,No
+EMP-5014,Marketing,Individual Contributor,38,22,10428.92,4.0,No,No
+EMP-5015,Sales,Director,45,11,7153.52,4.0,Yes,No
+EMP-5016,Engineering,Individual Contributor,44,7,8025.48,5.0,No,Yes
+EMP-5017,Sales,Director,39,1,6303.83,4.0,No,No
+EMP-5018,Sales,Manager,35,3,6008.43,3.0,No,Yes
+EMP-5019,HR,Individual Contributor,36,13,46342.80295195263,5.0,Yes,No
+EMP-5020,Sales,Individual Contributor,36,15,8248.43,1.0,Yes,No
+EMP-5021,Engineering,Individual Contributor,27,18,8875.3,2.0,No,No
+EMP-5022,Sales,Individual Contributor,48,1,4408.1,2.0,No,No
+EMP-5023,Finance,Individual Contributor,36,11,6106.52,2.0,Yes,No
+EMP-5024,Engineering,Manager,57,13,5809.77,3.0,No,No
+EMP-5025,Sales,Individual Contributor,29,5,7424.34,1.0,No,No
+EMP-5026,Engineering,Manager,36,12,5302.4,5.0,Yes,No
+EMP-5027,HR,Individual Contributor,24,3,8548.95,5.0,No,No
+EMP-5028,Finance,Manager,34,21,6656.91,2.0,No,Yes
+EMP-5029,Sales,Manager,55,17,2500.0,1.0,No,No
+EMP-5030,Finance,Individual Contributor,45,11,7473.98,1.0,No,Yes
+EMP-5031,Finance,Individual Contributor,61,19,8691.97,1.0,No,No
+EMP-5032,Finance,Director,53,21,3965.46,4.0,No,No
+EMP-5033,Marketing,Individual Contributor,53,20,7399.2,4.0,No,No
+EMP-5034,Marketing,Individual Contributor,51,18,10525.91,2.0,Yes,Yes
+EMP-5035,Engineering,Individual Contributor,34,7,6746.55,1.0,Yes,No
+EMP-5036,HR,Individual Contributor,22,6,9011.58,1.0,No,No
+EMP-5037,Engineering,Manager,55,15,5527.26,5.0,No,No
+EMP-5038,Marketing,Individual Contributor,36,18,6460.48,5.0,Yes,No
+EMP-5039,Engineering,Director,35,5,6049.83,2.0,No,No
+EMP-5040,HR,Individual Contributor,50,19,5648.34,1.0,Yes,No
+EMP-5041,HR,Individual Contributor,55,20,6175.01,2.0,No,No
+EMP-5042,Sales,Manager,39,10,2912.5,5.0,No,No
+EMP-5043,Finance,Manager,28,4,5772.06,5.0,No,No
+EMP-5044,Engineering,Individual Contributor,50,15,9443.17,4.0,No,No
+EMP-5045,Finance,Individual Contributor,52,6,4379.88,2.0,Yes,No
+EMP-5046,Engineering,Manager,46,4,4154.51,2.0,No,Yes
+EMP-5047,Engineering,Director,59,10,6634.67,1.0,Yes,No
+EMP-5048,Finance,Individual Contributor,35,14,6744.6,1.0,No,Yes
+EMP-5049,sales,Individual Contributor,29,2,7330.42,4.0,Yes,No
+EMP-5050,Finance,Individual Contributor,48,4,6249.78,3.0,No,No
+EMP-5051,Engineering,Manager,23,22,6658.1,3.0,No,No
+EMP-5052,Engineering,Individual Contributor,38,20,5728.05,3.0,No,Yes
+EMP-5053,Engineering,Individual Contributor,58,4,3693.25,2.0,No,No
+EMP-5054,Engineering,Individual Contributor,35,8,6342.94,2.0,No,Yes
+EMP-5055,Engineering,Individual Contributor,46,14,8094.11,5.0,Yes,Yes
+EMP-5056,Sales,Individual Contributor,51,2,7633.12,2.0,Yes,No
+EMP-5057,sales,Director,50,5,2662.67,2.0,No,No
+EMP-5058,Sales,Manager,41,16,7054.24,2.0,Yes,No
+EMP-5059,Finance,Director,42,20,4535.91,,Yes,No
+EMP-5060,Finance,VP,43,7,9562.76,2.0,No,No
+EMP-5061,Engineering,Manager,56,20,7217.79,1.0,No,Yes
+EMP-5062,marketing ,Individual Contributor,58,24,8471.82,1.0,No,No
+EMP-5063,Engineering,Manager,37,10,6546.57,5.0,No,No
+EMP-5064,Marketing,Individual Contributor,38,5,6354.68,4.0,No,No
+EMP-5065,HR,Individual Contributor,37,7,9790.86,1.0,Yes,No
+EMP-5066,Finance,Individual Contributor,23,9,8640.1,4.0,No,No
+EMP-5067,Engineering,Director,25,23,6759.29,4.0,No,No
+EMP-5068,HR,Individual Contributor,42,2,6060.73,5.0,No,No
+EMP-5069,sales,Individual Contributor,60,22,2744.22,,Yes,No
+EMP-5070,Finance,Individual Contributor,55,13,7214.05,2.0,No,Yes
+EMP-5071,Sales,Director,51,22,6222.57,4.0,Yes,No
+EMP-5072,Marketing,Manager,27,13,7718.7,5.0,Yes,No
+EMP-5073,Marketing,VP,38,9,8387.2,5.0,Yes,No
+EMP-5074,Marketing,Manager,60,11,9212.43,5.0,No,No
+EMP-5075,Sales,Individual Contributor,46,5,7241.38,1.0,No,Yes
+EMP-5076,Finance,Individual Contributor,26,11,4198.01,2.0,No,No
+EMP-5077,Sales,Manager,26,22,2500.0,1.0,No,Yes
+EMP-5078,Marketing,Individual Contributor,41,13,4685.66,3.0,No,No
+EMP-5079,Sales,Individual Contributor,37,1,9433.67,2.0,Yes,No
+EMP-5080,Engineering,Individual Contributor,58,8,10511.68,4.0,Yes,No
+EMP-5081,Engineering,Manager,61,9,5976.62,5.0,No,No
+EMP-5082,Engineering,Individual Contributor,30,16,3285.89,3.0,No,No
+EMP-5083,Sales,Director,26,16,5073.49,2.0,No,No
+EMP-5084,Sales,Individual Contributor,23,2,9003.17,1.0,Yes,Yes
+EMP-5085,Engineering,Manager,30,18,5199.77,5.0,Yes,Yes
+EMP-5086,HR,Individual Contributor,57,0,7796.07,1.0,Yes,No
+EMP-5087,Finance,Manager,43,11,6870.83,2.0,No,No
+EMP-5088,Sales,Individual Contributor,43,6,8062.01,2.0,No,No
+EMP-5089,Engineering,Individual Contributor,43,3,10499.62,3.0,No,No
+EMP-5090,Sales,Individual Contributor,55,9,7797.52,4.0,No,No
+EMP-5091,Sales,Individual Contributor,50,12,6823.22,1.0,No,No
+EMP-5092,Marketing,Individual Contributor,59,1,10742.42,3.0,No,No
+EMP-5093,Marketing,Individual Contributor,54,9,7269.01,5.0,Yes,No
+EMP-5094,Sales,Individual Contributor,39,20,4755.52,,No,No
+EMP-5095,Sales,Individual Contributor,28,21,8012.42,3.0,No,No
+EMP-5096,Sales,Individual Contributor,22,24,7484.4,,Yes,Yes
+EMP-5097,Finance,Individual Contributor,54,3,5822.61,2.0,No,No
+EMP-5098,Finance,Individual Contributor,22,17,5361.31,5.0,No,No
+EMP-5099,Sales,Director,45,4,5843.83,1.0,No,Yes
+EMP-5100,Sales,Individual Contributor,25,18,5329.84,4.0,No,No
+EMP-5101,Finance,Individual Contributor,25,1,5915.33,4.0,No,No
+EMP-5102,Finance,Manager,39,11,4645.85,2.0,No,No
+EMP-5103,Engineering,Individual Contributor,48,16,7349.54,2.0,Yes,No
+EMP-5104,Sales,Individual Contributor,53,9,7184.64,5.0,Yes,Yes
+EMP-5105,Sales,Manager,54,1,7259.44,5.0,Yes,No
+EMP-5106,Engineering,Manager,49,5,6362.79,2.0,Yes,No
+EMP-5107,Engineering,Individual Contributor,57,7,6109.14,2.0,No,No
+EMP-5108,Sales,Individual Contributor,27,18,9672.41,4.0,No,Yes
+EMP-5109,Marketing,Individual Contributor,37,10,6648.29,2.0,Yes,No
+EMP-5110,Sales,Manager,55,24,9280.29,3.0,No,No
+EMP-5111,HR,Individual Contributor,44,11,4307.88,1.0,Yes,No
+EMP-5112,Engineering,Manager,45,8,7796.19,2.0,No,No
+EMP-5113,Sales,Individual Contributor,34,1,4883.65,5.0,Yes,No
+EMP-5114,Marketing,Manager,39,7,5276.47,,No,No
+EMP-5115,Engineering,Manager,34,10,5593.81,5.0,Yes,Yes
+EMP-5116,Finance,Manager,58,20,5455.88,3.0,No,No
+EMP-5117,Engineering,Individual Contributor,60,3,5466.87,2.0,No,No
+EMP-5118,sales,Manager,38,9,9178.01,1.0,No,No
+EMP-5119,marketing ,Individual Contributor,36,20,6599.9,5.0,Yes,No
+EMP-5120,sales,Individual Contributor,39,19,6995.12,3.0,Yes,No
+EMP-5121,Finance,Individual Contributor,44,15,5494.25,4.0,Yes,No
+EMP-5122,Engineering,Individual Contributor,51,7,8385.27,2.0,No,Yes
+EMP-5123,Engineering,Individual Contributor,55,3,7281.12,1.0,Yes,Yes
+EMP-5124,Sales,Manager,25,9,5820.36,2.0,No,No
+EMP-5125,Engineering,Individual Contributor,24,11,3014.58,,No,Yes
+EMP-5126,Finance,Manager,28,13,6975.85,1.0,No,No
+EMP-5127,HR,Manager,39,15,7766.49,4.0,No,No
+EMP-5128,Sales,Individual Contributor,28,21,4346.53,2.0,Yes,No
+EMP-5129,Sales,Individual Contributor,61,17,5850.13,3.0,Yes,No
+EMP-5130,HR,Director,27,20,7681.75,2.0,No,No
+EMP-5131,Finance,Individual Contributor,43,21,3043.96,2.0,No,No
+EMP-5132,Sales,Director,22,20,5072.53,2.0,Yes,No
+EMP-5133,Engineering,Manager,25,11,7329.2,5.0,Yes,No
+EMP-5134,Engineering,Manager,50,17,8931.04,4.0,No,Yes
+EMP-5135,Finance,Manager,42,6,11308.72,4.0,Yes,No
+EMP-5136,Sales,Manager,47,19,10809.04,4.0,No,No
+EMP-5137,Sales,Individual Contributor,35,23,6816.29,5.0,No,No
+EMP-5138,HR,Individual Contributor,30,22,5434.7,3.0,Yes,Yes
+EMP-5139,Sales,Manager,33,6,8530.87,2.0,Yes,No
+EMP-5140,Engineering,Director,27,8,5304.1,3.0,Yes,No
+EMP-5141,Engineering,Individual Contributor,41,0,4823.39,5.0,No,No
+EMP-5142,Engineering,Individual Contributor,45,5,5828.41,4.0,No,No
+EMP-5143,Engineering,Manager,48,5,5552.52,2.0,No,No
+EMP-5144,Engineering,Manager,59,21,7407.79,1.0,No,No
+EMP-5145,Sales,Manager,29,11,5174.72,1.0,No,No
+EMP-5146,Engineering,Manager,22,21,6687.27,3.0,Yes,No
+EMP-5147,HR,Individual Contributor,45,11,10008.9,4.0,Yes,Yes
+EMP-5148,HR,Manager,28,9,6768.71,1.0,No,No
+EMP-5149,Sales,Individual Contributor,40,22,9836.83,3.0,Yes,No
+EMP-5150,Sales,VP,43,5,9144.52,5.0,Yes,No
+EMP-5151,sales,Individual Contributor,56,16,7802.49,3.0,No,No
+EMP-5152,Engineering,Director,51,18,5720.86,3.0,No,No
+EMP-5153,Engineering,Manager,50,17,8789.12,3.0,No,No
+EMP-5154,Marketing,Individual Contributor,43,5,5950.06,2.0,No,No
+EMP-5155,Sales,Individual Contributor,32,23,6495.58,3.0,Yes,No
+EMP-5156,Sales,Manager,41,18,7226.44,3.0,No,Yes
+EMP-5157,Engineering,Manager,50,9,6488.19,2.0,Yes,Yes
+EMP-5158,Marketing,Individual Contributor,55,23,4915.41,2.0,No,No
+EMP-5159,Sales,Individual Contributor,22,7,3140.38,5.0,No,No
+EMP-5160,Marketing,Individual Contributor,52,20,8610.09,4.0,Yes,No
+EMP-5161,sales,Individual Contributor,51,23,7754.75,1.0,No,No
+EMP-5162,Finance,Individual Contributor,39,5,2714.66,1.0,Yes,No
+EMP-5163,Finance,Manager,38,20,4857.07,3.0,No,No
+EMP-5164,Engineering,Individual Contributor,59,24,6893.94,5.0,No,Yes
+EMP-5165,Sales,Manager,35,6,7473.66,3.0,No,Yes
+EMP-5166,Engineering,Manager,44,23,3159.4,1.0,No,No
+EMP-5167,Sales,Director,46,0,6303.67,2.0,Yes,No
+EMP-5168,Marketing,Individual Contributor,36,17,7687.24,4.0,No,No
+EMP-5169,HR,Individual Contributor,43,23,5726.67,5.0,No,No
+EMP-5170,Marketing,Individual Contributor,24,24,7062.83,2.0,Yes,No
+EMP-5171,HR,Individual Contributor,40,19,5427.39,4.0,No,Yes
+EMP-5172,Engineering,Manager,55,11,8500.23,5.0,No,No
+EMP-5173,Sales,Manager,56,15,4741.57,5.0,Yes,No
+EMP-5174,HR,Manager,22,9,3987.43,1.0,No,No
+EMP-5175,Engineering,Individual Contributor,42,9,6563.64,2.0,Yes,No
+EMP-5176,Marketing,Individual Contributor,50,13,3346.24,5.0,No,Yes
+EMP-5177,sales,Individual Contributor,27,24,2500.0,5.0,Yes,No
+EMP-5178,Sales,Individual Contributor,58,19,8884.22,4.0,No,No
+EMP-5179,Finance,Director,22,9,4334.71,1.0,No,No
+EMP-5180,Sales,Manager,22,9,3565.97,3.0,No,No
+EMP-5181,Finance,Individual Contributor,48,24,4714.13,1.0,No,No
+EMP-5182,Finance,Individual Contributor,42,10,4615.37,3.0,No,Yes
+EMP-5183,HR,Individual Contributor,37,22,6187.35,2.0,No,No
+EMP-5184,Marketing,VP,61,1,4094.33,,Yes,No
+EMP-5185,Engineering,Manager,47,24,7596.01,5.0,No,No
+EMP-5186,Finance,Director,37,19,7921.72,2.0,No,No
+EMP-5187,Engineering,Individual Contributor,49,7,3695.02,,No,No
+EMP-5188,Engineering,Manager,22,22,5140.19,1.0,No,No
+EMP-5189,Marketing,Individual Contributor,57,6,5349.27,2.0,No,Yes
+EMP-5190,Engineering,Individual Contributor,31,7,6136.98,,No,No
+EMP-5191,Engineering,VP,38,0,8881.9,1.0,No,No
+EMP-5192,Engineering,Manager,44,20,9008.69,2.0,Yes,No
+EMP-5193,Engineering,Individual Contributor,28,1,11997.51,1.0,No,No
+EMP-5194,Finance,Individual Contributor,28,17,2500.0,2.0,No,No
+EMP-5195,Sales,Individual Contributor,36,14,4466.55,2.0,No,No
+EMP-5196,Finance,Individual Contributor,55,0,49991.01230975783,2.0,No,No
+EMP-5197,Marketing,Individual Contributor,25,4,2538.46,,Yes,No
+EMP-5198,HR,Individual Contributor,35,1,10440.78,1.0,No,No
+EMP-5199,Engineering,Individual Contributor,35,19,6824.17,4.0,No,No
+EMP-5200,HR,Director,37,2,6905.09,2.0,Yes,No
+EMP-5201,Sales,Manager,28,18,3684.44,1.0,No,Yes
+EMP-5202,HR,Individual Contributor,53,17,5507.44,5.0,Yes,No
+EMP-5203,Sales,Manager,40,21,10344.23,2.0,No,No
+EMP-5204,Finance,Individual Contributor,23,17,6395.1,2.0,Yes,Yes
+EMP-5205,Finance,Individual Contributor,31,13,5522.1,4.0,No,No
+EMP-5206,Engineering,Individual Contributor,38,23,7392.58,3.0,No,No
+EMP-5207,Sales,Individual Contributor,58,7,6077.12,3.0,No,No
+EMP-5208,HR,VP,33,11,7259.33,2.0,No,No
+EMP-5209,sales,Manager,27,20,4630.57,1.0,No,Yes
+EMP-5210,Finance,Individual Contributor,43,9,6330.26,5.0,Yes,No
+EMP-5211,Sales,Individual Contributor,53,22,5089.63,5.0,Yes,No
+EMP-5212,Sales,Manager,41,19,2531.27,1.0,No,No
+EMP-5213,Finance,Manager,22,16,7560.31,2.0,Yes,No
+EMP-5214,Marketing,Director,27,10,3785.7,5.0,No,No
+EMP-5215,Finance,Director,40,1,6137.57,3.0,No,No
+EMP-5216,Engineering,Director,39,3,8537.35,1.0,No,No
+EMP-5217,Marketing,VP,27,0,3204.81,4.0,No,No
+EMP-5218,Marketing,Manager,54,14,7830.31,2.0,Yes,No
+EMP-5219,Marketing,Individual Contributor,44,12,5840.41,1.0,No,Yes
+EMP-5220,Marketing,Individual Contributor,44,7,4373.65,5.0,No,Yes
+EMP-5221,Engineering,Individual Contributor,47,24,10950.43,,No,No
+EMP-5222,Engineering,Individual Contributor,34,3,6498.78,3.0,No,No
+EMP-5223,sales,Individual Contributor,28,9,5250.2,2.0,Yes,No
+EMP-5224,HR,Individual Contributor,36,18,4783.53,2.0,No,Yes
+EMP-5225,Sales,Individual Contributor,48,17,8438.56,3.0,No,Yes
+EMP-5226,Marketing,Manager,47,4,5153.48,,No,No
+EMP-5227,Sales,Individual Contributor,54,18,8164.34,2.0,Yes,No
+EMP-5228,Marketing,Individual Contributor,36,22,6494.54,3.0,No,No
+EMP-5229,HR,Individual Contributor,57,21,8955.61,1.0,No,No
+EMP-5230,Sales,Manager,48,15,4206.41,3.0,Yes,No
+EMP-5231,Sales,Individual Contributor,26,0,4513.26,3.0,No,No
+EMP-5232,Sales,Manager,23,11,5881.79,2.0,No,No
+EMP-5233,Marketing,Individual Contributor,54,23,6064.25,1.0,No,No
+EMP-5234,Finance,Individual Contributor,37,1,5719.97,4.0,No,No
+EMP-5235,Sales,Individual Contributor,44,20,12289.17,4.0,Yes,No
+EMP-5236,HR,Individual Contributor,59,24,11039.14,5.0,No,Yes
+EMP-5237,Engineering,Individual Contributor,37,7,7157.92,3.0,No,No
+EMP-5238,Engineering,Individual Contributor,35,17,7417.34,3.0,No,No
+EMP-5239,Finance,Individual Contributor,50,24,5979.85,1.0,No,No
+EMP-5240,Engineering,Individual Contributor,47,15,4190.38,4.0,No,Yes
+EMP-5241,Engineering,Individual Contributor,56,4,6099.44,5.0,Yes,No
+EMP-5242,Sales,Individual Contributor,36,21,8196.46,1.0,No,No
+EMP-5243,Sales,Manager,24,12,9372.38,3.0,No,No
+EMP-5244,sales,Individual Contributor,44,18,8690.56,4.0,No,No
+EMP-5245,Sales,Individual Contributor,50,2,3178.5,5.0,No,No
+EMP-5246,Marketing,Individual Contributor,55,7,5863.7,2.0,No,No
+EMP-5247,Engineering,Individual Contributor,54,11,3268.49,4.0,No,No
+EMP-5248,Engineering,Individual Contributor,44,1,9071.46,5.0,Yes,No
+EMP-5249,Sales,Manager,28,10,5592.75,1.0,No,No
+EMP-5250,Engineering,Individual Contributor,24,11,6396.36,2.0,No,No
+EMP-5251,Marketing,Individual Contributor,53,17,7556.11,5.0,No,No
+EMP-5252,Finance,Individual Contributor,52,12,12585.51,5.0,No,No
+EMP-5253,Sales,Manager,39,4,7090.2,3.0,No,No
+EMP-5254,Finance,Individual Contributor,28,21,5975.8,4.0,No,No
+EMP-5255,Engineering,Director,22,11,3769.71,3.0,No,No
+EMP-5256,Engineering,Manager,35,1,9709.01,2.0,No,No
+EMP-5257,Engineering,Individual Contributor,53,4,6100.4,5.0,No,No
+EMP-5258,Sales,Manager,27,6,10145.71,3.0,No,No
+EMP-5259,Sales,Individual Contributor,60,23,8932.35,4.0,No,No
+EMP-5260,Marketing,Individual Contributor,31,11,5481.5,2.0,No,No
+EMP-5261,Engineering,Individual Contributor,28,15,3436.99,1.0,No,Yes
+EMP-5262,Finance,Individual Contributor,47,22,7099.65,3.0,No,No
+EMP-5263,Engineering,Director,55,7,5147.21,2.0,No,No
+EMP-5264,Sales,Manager,51,8,6586.56,1.0,Yes,No
+EMP-5265,marketing ,Manager,57,14,8807.91,3.0,Yes,No
+EMP-5266,Engineering,Director,42,4,2862.12,2.0,No,No
+EMP-5267,Engineering,Individual Contributor,38,12,7082.15,2.0,No,Yes
+EMP-5268,Marketing,Director,54,4,8171.11,3.0,No,No
+EMP-5269,Finance,Individual Contributor,31,10,8277.84,2.0,No,No
+EMP-5270,HR,Individual Contributor,33,9,3500.21,5.0,Yes,No
+EMP-5271,Marketing,Individual Contributor,37,19,7422.54,3.0,No,No
+EMP-5272,Marketing,Individual Contributor,53,12,9147.78,2.0,No,Yes
+EMP-5273,Finance,Director,36,8,7255.11,1.0,No,No
+EMP-5274,Engineering,Individual Contributor,48,20,6245.47,1.0,No,No
+EMP-5275,Sales,Manager,49,13,9007.15,5.0,Yes,No
+EMP-5276,sales,Individual Contributor,38,17,4972.5,3.0,Yes,Yes
+EMP-5277,Sales,Manager,23,14,3134.37,2.0,No,No
+EMP-5278,Marketing,Manager,57,9,6058.68,,No,Yes
+EMP-5279,Marketing,Individual Contributor,28,23,7677.1,1.0,No,No
+EMP-5280,Marketing,Individual Contributor,34,6,8785.66,5.0,Yes,No
+EMP-5281,Sales,Individual Contributor,36,7,7667.11,1.0,Yes,No
+EMP-5282,marketing ,Individual Contributor,46,2,8338.81,1.0,No,No
+EMP-5283,Engineering,Individual Contributor,44,14,8799.69,5.0,No,No
+EMP-5284,Marketing,Manager,43,15,5753.37,3.0,No,No
+EMP-5285,Engineering,Manager,47,3,6174.53,2.0,Yes,Yes
+EMP-5286,Engineering,Manager,54,20,9331.77,3.0,No,No
+EMP-5287,Sales,Individual Contributor,32,5,3837.65,4.0,Yes,No
+EMP-5288,Sales,Manager,31,0,7444.09,4.0,Yes,Yes
+EMP-5289,Finance,Individual Contributor,46,3,4923.24,4.0,No,No
+EMP-5290,Finance,Individual Contributor,58,10,8920.58,5.0,Yes,No
+EMP-5291,Marketing,Individual Contributor,59,11,6460.54,1.0,Yes,Yes
+EMP-5292,Sales,Manager,45,4,6516.71,3.0,No,Yes
+EMP-5293,Engineering,Individual Contributor,61,22,10303.54,2.0,No,No
+EMP-5294,marketing ,Individual Contributor,54,20,4132.71,4.0,No,No
+EMP-5295,HR,Individual Contributor,38,15,6974.8,3.0,No,No
+EMP-5296,Sales,Director,45,12,6103.72,4.0,Yes,No
+EMP-5297,Sales,Manager,58,12,7671.3,4.0,Yes,No
+EMP-5298,marketing ,Manager,23,16,10744.53,2.0,No,Yes
+EMP-5299,Engineering,Director,53,6,5168.47,5.0,No,No
+EMP-5300,sales,Individual Contributor,45,7,3865.73,1.0,No,No
+EMP-5301,Sales,Individual Contributor,30,12,4719.48,5.0,Yes,No
+EMP-5302,Engineering,Individual Contributor,25,22,5987.8,3.0,No,No
+EMP-5303,Finance,Individual Contributor,38,15,6641.31,5.0,Yes,No
+EMP-5304,Finance,Director,38,3,6751.96,3.0,No,Yes
+EMP-5305,Engineering,VP,51,7,10465.85,3.0,No,Yes
+EMP-5306,Engineering,Individual Contributor,61,15,10074.65,1.0,No,No
+EMP-5307,Sales,Individual Contributor,32,20,9366.48,2.0,No,No
+EMP-5308,Engineering,Director,42,9,12031.77,1.0,No,No
+EMP-5309,Engineering,Manager,42,24,8313.02,5.0,No,No
+EMP-5310,Marketing,Manager,39,11,8938.38,3.0,No,No
+EMP-5311,Engineering,Director,50,11,8270.5,4.0,Yes,No
+EMP-5312,Sales,Individual Contributor,45,4,7909.99,4.0,No,Yes
+EMP-5313,Sales,Manager,31,15,7367.67,3.0,Yes,Yes
+EMP-5314,Engineering,Manager,38,0,5626.91,1.0,No,No
+EMP-5315,Sales,Director,39,8,3757.09,2.0,No,No
+EMP-5316,Sales,Individual Contributor,41,11,6212.56,1.0,No,No
+EMP-5317,Finance,Individual Contributor,58,4,7744.7,3.0,No,No
+EMP-5318,Engineering,Manager,39,21,6658.98,3.0,Yes,No
+EMP-5319,Engineering,Individual Contributor,38,19,4156.26,2.0,No,No
+EMP-5320,Finance,Individual Contributor,30,21,6135.06,5.0,No,No
+EMP-5321,Finance,Individual Contributor,35,23,6020.39,5.0,No,Yes
+EMP-5322,Marketing,Individual Contributor,50,2,6362.82,2.0,No,No
+EMP-5323,HR,Manager,52,4,7580.01,,No,No
+EMP-5324,Engineering,VP,25,1,8053.77,4.0,No,Yes
+EMP-5325,Engineering,Individual Contributor,39,13,5399.89,5.0,Yes,No
+EMP-5326,Engineering,Director,41,1,8658.47,5.0,Yes,No
+EMP-5327,Marketing,Individual Contributor,30,12,8989.6,5.0,No,No
+EMP-5328,Marketing,Individual Contributor,34,6,7204.66,4.0,No,No
+EMP-5329,Engineering,Individual Contributor,36,9,7962.45,5.0,No,No
+EMP-5330,Sales,Individual Contributor,48,12,8665.31,4.0,No,Yes
+EMP-5331,Marketing,Director,36,15,4085.18,2.0,No,No
+EMP-5332,Sales,Individual Contributor,49,13,8820.41,1.0,No,No
+EMP-5333,Engineering,Manager,58,10,4761.87,2.0,Yes,No
+EMP-5334,Marketing,Individual Contributor,40,9,4976.06,1.0,Yes,No
+EMP-5335,marketing ,Individual Contributor,47,5,46067.70354477129,2.0,No,No
+EMP-5336,HR,Individual Contributor,47,3,2500.0,1.0,No,No
+EMP-5337,Finance,Manager,46,20,6886.36,1.0,No,No
+EMP-5338,Engineering,Individual Contributor,47,0,8659.92,3.0,No,No
+EMP-5339,HR,Individual Contributor,47,6,2878.97,1.0,Yes,No
+EMP-5340,Marketing,Individual Contributor,49,23,8895.82,1.0,No,No
+EMP-5341,Sales,Individual Contributor,39,8,4962.67,3.0,Yes,No
+EMP-5342,Sales,Individual Contributor,53,7,6955.1,5.0,No,No
+EMP-5343,Engineering,Manager,24,4,5282.14,5.0,No,No
+EMP-5344,Engineering,Individual Contributor,23,18,7760.42,3.0,No,No
+EMP-5345,Marketing,Individual Contributor,54,9,8754.88,4.0,No,No
+EMP-5346,Finance,Manager,40,10,7923.42,1.0,Yes,No
+EMP-5347,Sales,Individual Contributor,38,24,6491.24,1.0,No,No
+EMP-5348,Sales,Director,54,14,5453.12,3.0,No,No
+EMP-5349,Finance,Individual Contributor,33,5,6347.54,3.0,No,Yes
+EMP-5350,Sales,Individual Contributor,24,14,7943.14,,No,No
+EMP-5351,Engineering,Director,47,4,8018.59,5.0,No,Yes
+EMP-5352,Marketing,Individual Contributor,56,18,7711.82,2.0,No,Yes
+EMP-5353,Engineering,Manager,29,21,3678.33,5.0,Yes,No
+EMP-5354,Sales,Director,57,18,6449.35,,No,No
+EMP-5355,Sales,Individual Contributor,28,9,5106.46,3.0,Yes,No
+EMP-5356,Sales,Individual Contributor,57,11,7962.84,4.0,No,No
+EMP-5357,Marketing,Manager,37,21,4817.06,5.0,No,No
+EMP-5358,Engineering,Individual Contributor,45,3,7494.52,4.0,No,No
+EMP-5359,Sales,Manager,22,17,5879.19,5.0,No,No
+EMP-5360,Marketing,Manager,46,15,2500.0,1.0,No,No
+EMP-5361,HR,Individual Contributor,31,7,8548.11,,Yes,No
+EMP-5362,Sales,Individual Contributor,37,3,6444.37,4.0,No,Yes
+EMP-5363,Engineering,Director,37,24,9307.15,4.0,No,Yes
+EMP-5364,Marketing,Individual Contributor,29,22,2836.32,2.0,No,No
+EMP-5365,sales,Director,50,11,5858.65,4.0,Yes,No
+EMP-5366,Engineering,Director,60,1,6023.91,4.0,No,Yes
+EMP-5367,Marketing,Individual Contributor,49,3,7094.45,5.0,No,No
+EMP-5368,Finance,Manager,27,4,3584.59,5.0,No,No
+EMP-5369,HR,Individual Contributor,37,2,7696.88,2.0,No,No
+EMP-5370,Marketing,Director,41,8,10705.66,1.0,No,No
+EMP-5371,HR,Individual Contributor,37,20,7543.98,4.0,No,No
+EMP-5372,Engineering,Individual Contributor,28,17,6704.32,1.0,No,No
+EMP-5373,Marketing,Individual Contributor,35,10,3469.59,2.0,Yes,No
+EMP-5374,Engineering,Individual Contributor,47,2,4796.66,2.0,Yes,No
+EMP-5375,Sales,Individual Contributor,47,24,6377.14,,No,No
+EMP-5376,marketing ,Manager,35,22,5334.49,4.0,Yes,No
+EMP-5377,Engineering,Individual Contributor,28,1,8757.76,3.0,No,No
+EMP-5378,Engineering,Individual Contributor,54,8,7674.15,2.0,No,No
+EMP-5379,Finance,Director,47,13,12423.23,,Yes,No
+EMP-5380,Sales,Manager,41,3,4342.11,1.0,No,No
+EMP-5381,Engineering,Director,24,8,6572.85,5.0,No,No
+EMP-5382,Sales,Individual Contributor,25,12,3456.32,1.0,No,Yes
+EMP-5383,HR,Individual Contributor,47,17,2500.0,2.0,No,No
+EMP-5384,marketing ,Individual Contributor,32,14,8089.99,2.0,No,No
+EMP-5385,Engineering,Individual Contributor,23,9,7592.55,1.0,No,No
+EMP-5386,Marketing,Director,35,15,4619.9,2.0,No,Yes
+EMP-5387,Engineering,Individual Contributor,51,11,6704.67,4.0,No,No
+EMP-5388,HR,Director,33,19,5115.61,2.0,Yes,No
+EMP-5389,Engineering,Manager,47,4,5412.74,5.0,Yes,Yes
+EMP-5390,Engineering,Individual Contributor,54,1,5795.37,4.0,No,No
+EMP-5391,Finance,Individual Contributor,34,9,4527.56,3.0,Yes,No
+EMP-5392,sales,Individual Contributor,35,0,4923.37,2.0,Yes,Yes
+EMP-5393,Sales,Individual Contributor,45,6,4985.44,,No,Yes
+EMP-5394,Marketing,Director,55,16,7430.33,5.0,Yes,Yes
+EMP-5395,Finance,Manager,47,15,2500.0,5.0,No,No
+EMP-5396,Engineering,Manager,42,23,5999.22,1.0,No,No
+EMP-5397,Sales,Individual Contributor,49,2,4107.1,1.0,No,No
+EMP-5398,Engineering,Individual Contributor,57,13,4186.58,1.0,No,No
+EMP-5399,Engineering,Individual Contributor,61,9,5343.56,5.0,Yes,No
+EMP-5010,Sales,Individual Contributor,56,19,9050.32,3.0,No,No
+EMP-5055,Engineering,Individual Contributor,46,14,8094.11,5.0,Yes,Yes

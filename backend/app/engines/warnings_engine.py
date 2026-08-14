@@ -113,6 +113,14 @@ def generate_warnings(df: pd.DataFrame, target_candidates: Optional[List[str]] =
                 pair = df[[col, target]].dropna()
                 if len(pair) < 10:
                     continue
+                # A constant column after the dropna-aligned subset (e.g. a
+                # numeric column that's only non-null within one category of
+                # a boolean/near-constant target) has zero variance, which
+                # makes the correlation formula divide by zero. Skip rather
+                # than let pandas/numpy emit a RuntimeWarning for a
+                # correlation that's undefined anyway.
+                if pair[col].nunique() <= 1 or pair[target].nunique() <= 1:
+                    continue
                 corr = pair[col].corr(pair[target])
                 if corr is not None and abs(corr) > 0.95:
                     warnings.append(TrustWarning(

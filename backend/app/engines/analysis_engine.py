@@ -29,6 +29,7 @@ from sklearn.model_selection import train_test_split
 from app.engines.feature_engineering_engine import (
     _usable_numeric_columns, _usable_categorical_columns, _usable_date_columns,
 )
+from app.core.confidence import capped_linear
 
 MIN_ROWS_FOR_REGRESSION_PER_PREDICTOR = 10
 MIN_ROWS_FOR_CLUSTERING = 30
@@ -91,7 +92,10 @@ def recommend_analyses(df: pd.DataFrame, goal_keywords: list[str] | None = None)
                     not_recommended_because=f"Span ({span_days} days) is below the {MIN_SPAN_DAYS_FOR_TREND}-day minimum.",
                 ))
                 continue
-            confidence = round(min(0.85, 0.5 + min(span_days, 365) / 365 * 0.35), 2)
+            confidence = capped_linear(
+                0.5, 0.35 / 365, min(span_days, 365), cap=0.85,
+                value_label="span_days (capped at 365)",
+            ).score
             recs.append(_rec(
                 "trend_analysis", f"Trend Analysis over '{col}'", [col],
                 True, f"'{col}' spans {span_days} days with {len(parsed)} dated row(s) - enough to "

@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import upload, profiling, cleaning, health, versioning, feature_engineering, eda, analysis, visualization, report
+from app.routers import upload, profiling, cleaning, health, versioning, feature_engineering, eda, analysis, visualization, report, copilot, filtering, samples
 
 app = FastAPI(
     title="SG-Insight API",
@@ -33,6 +33,9 @@ app.include_router(eda.router)
 app.include_router(analysis.router)
 app.include_router(visualization.router)
 app.include_router(report.router)
+app.include_router(copilot.router)
+app.include_router(filtering.router)
+app.include_router(samples.router)
 
 
 @app.get("/")

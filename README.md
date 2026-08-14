@@ -1,5 +1,15 @@
 # SG-Insight
 
+**Live demo:** [sg-insight-frontend.onrender.com](https://sg-insight-frontend.onrender.com)
+(backend: [sg-insight-backend.onrender.com](https://sg-insight-backend.onrender.com)) —
+Render free tier, so the first request after ~15 minutes idle will be slow
+(cold start) and uploaded session data resets on redeploy/restart (no
+persistent disk on this plan — see the Deployment section for the paid-tier
+fix). Fine for trying the workbench out; not a place to leave real data.
+Deploys on push — the live version reflects whatever was last pushed to the
+connected branch, which may lag behind this repo (e.g. the Copilot in
+session 11 below won't be live until pushed and redeployed).
+
 AI-assisted data analytics workbench. Upload a dataset, work through a structured
 profiling → cleaning → feature engineering → EDA → analysis → report pipeline, with
 every AI recommendation shown as a preview + reason + confidence reading that
@@ -92,9 +102,11 @@ uvicorn app.main:app --reload --port 8000
 
 Everything else — upload, profiling, cleaning, feature engineering, EDA, and the
 Analysis Recommendation Engine's actual computations (`run-analysis`) — works with
-no API key at all. Only `POST /api/dataset/ai-insight` needs `ANTHROPIC_API_KEY`
-set; without it, that one endpoint returns a `503` with a message pointing back
-here instead of failing unclearly. Optionally override the model with
+no API key at all. Only `POST /api/dataset/ai-insight` and the Copilot's
+`POST /api/dataset/copilot/message` need `ANTHROPIC_API_KEY` set; without it,
+those endpoints return a `503` with a message pointing back here instead of
+failing unclearly (`/copilot/confirm-action` never calls the AI model at all,
+so it works with no key). Optionally override the model with
 `ANTHROPIC_MODEL` (defaults to `claude-sonnet-5`).
 
 Session data (uploaded datasets, version history, pinned charts) persists to
@@ -102,8 +114,8 @@ Session data (uploaded datasets, version history, pinned charts) persists to
 point it elsewhere with `SG_INSIGHT_DATA_DIR=/some/path`.
 
 **Tests**: `pip install -r requirements-dev.txt` then `pytest` from `backend/`
-— 158 tests across every engine, ~5 seconds, no API key or network needed
-(the one test file touching the Anthropic API mocks the client entirely).
+— 199 tests across every engine, ~5 seconds, no API key or network needed
+(the two test files touching the Anthropic API mock the client entirely).
 
 ### Frontend
 ```bash
@@ -725,15 +737,14 @@ docker compose up --build
 
 Nothing left on the original four-item list from the polish-pass session —
 everything proposed there (polish, persistence, PDF charts, deployment) is
-now done. Reasonable follow-ups if this keeps going:
+now done, and the Render deploy prepared in that session is now actually
+live (see the link at the top of this file) — first-try deploy, no fixes
+needed to the Blueprint. Reasonable follow-ups if this keeps going:
 
-- Actually provision the Render deploy (this session prepared everything but
-  couldn't execute the "click deploy" step itself) and link the live URL
-  from this README.
 - A paid-tier variant of `render.yaml` with a `disk:` block, for anyone who
   wants uploaded data to actually survive restarts in production.
 - CI (GitHub Actions) to run the frontend build, backend `py_compile`, and
-  now the actual `pytest` suite (158 tests, ~5s, no external dependencies)
+  now the actual `pytest` suite (199 tests, ~5s, no external dependencies)
   on every push.
 - Fix (or deliberately leave, but decide) the two discrepancies found while
   writing tests this session: `category`-dtype columns not being treated as
@@ -860,6 +871,221 @@ covering `app/engines/` and `app/core/` end to end.
   a row (158/158 each time) and confirmed zero state leakage into the real
   `backend/data/` directory afterward.
 
+
+## Live Copilot — session 11 (conversational layer, propose-then-confirm)
+
+New feature: a persistent chat sidebar, visible on every tab, that can
+answer questions about the current dataset and propose next steps — but
+never applies anything without an explicit confirm click, same contract as
+every other feature in this app.
+
+- **New `app/engines/copilot_engine.py`**: uses Claude's tool-use API with
+  six read-only tools (`get_session_summary`, `get_cleaning_recommendations`,
+  `get_feature_recommendations`, `get_chart_recommendations`,
+  `get_analysis_recommendations`, `get_column_stats`) — all of them thin
+  wrappers around the *existing* recommendation engines, not new logic.
+  The model can call these in a loop (capped at 6 round-trips) to ground
+  itself before answering, then returns a structured `{reply,
+  proposed_action, has_more_suggestions}` JSON object. Reuses `ai_engine.py`'s
+  exact grounding-check (`_check_grounding`) against everything gathered via
+  tool calls, so a fabricated number in the copilot's reply gets flagged the
+  same way an AI Insight's would.
+- **The one deliberate constraint that shapes the whole design**: none of
+  the six tools can mutate the dataframe. A confirmed proposal is applied by
+  a *separate* `/copilot/confirm-action` endpoint that only ever runs after
+  a human clicks Confirm on a rendered card — and it applies the action by
+  literally calling `cleaning.py`'s `apply_cleaning_action` /
+  `feature_engineering.py`'s `apply_feature_action_endpoint` directly, the
+  exact same functions a manually-clicked recommendation card calls. There
+  is no second mutation path that could drift from the UI's behavior.
+- **Frontend**: new `CopilotPanel.jsx` in the persistent right-hand aside
+  (widened from `w-72` to `w-96` to fit a real chat UI), with proposal cards
+  rendered inline in the thread using the same `ConfidenceMeter` component
+  as every other recommendation card. After a confirmed action, if the
+  copilot has more to suggest, it asks "keep going?" rather than either
+  auto-continuing or going silent.
+- **Two real bugs found and fixed during HTTP testing** (not just unit
+  tests): (1) a bad/invalid `ANTHROPIC_API_KEY` was surfacing as a raw
+  unhandled 500, not the clean 503 the rest of this app's AI-backed
+  endpoints return — fixed by wrapping the `client.messages.create()` call
+  in a broad `except Exception` that re-raises as `RuntimeError`; (2)
+  `confirm-action`'s `result_summary` was always falling back to a generic
+  message because it read `resp.preview` (the raw engine preview dict, which
+  never contains that key) instead of the actual log entry
+  `cleaning.py`/`feature_engineering.py` construct it onto — fixed by
+  reading `session.log[-1].result_summary` instead.
+- **Verified two ways**: 11 new `pytest` tests mocking the Anthropic client
+  entirely (tool-use loop, markdown-fence stripping, grounding, the
+  round-trip cap, every declared tool has a dispatch entry) — 169 tests
+  total now, all still passing — plus real HTTP round-trips confirming both
+  the cleaning and feature-engineering confirm-action paths actually apply
+  and version correctly.
+- **A note on how this session actually went**: the sandbox environment
+  reset partway through (lost the whole working directory), recovered from
+  the last delivered zip, and rebuilt every file above from what had already
+  been written — re-verified with the same test suite and HTTP checks
+  afterward to confirm the recovery was exact, not approximate.
+
+
+## Interactive Investigation — session 12 (global filter + drill-down)
+
+New feature: a global filter, visible on every tab (per your call — one
+filter persists across tabs until cleared, not per-tab), settable either by
+hand or by clicking a bar/box-plot group in any chart, plus a drill-down
+panel showing the actual matching rows.
+
+- **New `app/core/filtering.py`**: `apply_filter(df, filters)` supports five
+  operators (`eq`/`in`/`gte`/`lte`/`between`) ANDed together. A filter is
+  explicitly a *view*, never a dataset version — it's recomputed against
+  `session.current` on every request, the same "always live off the current
+  version" principle the Dashboard's pinned charts already follow, and it
+  never touches `session.log`/`session.versions`.
+- **New endpoints**: `POST /filtered-rows` (the drill-down result — actual
+  paginated rows matching the filter, not a chart) and `POST /build-chart`
+  (an ad-hoc filtered chart preview, deliberately kept separate from
+  `/dashboard/pin` — a pinned chart stays unfiltered by design, so it never
+  goes stale in a way the user didn't cause).
+- **Every EDA endpoint is now filter-aware** (overview, distributions,
+  correlation, missing-patterns, relationships, category-analysis,
+  time-analysis), plus `chart-recommendations`. Filters arrive as a
+  JSON-encoded query-string param on these GET routes (a new
+  `parse_filters_query` FastAPI dependency) rather than changing them to
+  POST — avoids a breaking change to every existing call site.
+- **Deliberately scoped down, and worth being explicit about**: Analysis-tab
+  endpoints (regression/clustering/hypothesis tests/etc.) do NOT respect the
+  filter in this pass — running inferential statistics on an arbitrary
+  filtered slice raises its own validity questions (sample size, selection
+  bias) that deserve their own design pass rather than being bolted on
+  here. Left as a noted fast-follow, not silently skipped.
+- **Drill-down wired for `bar_chart` and `box_plot` only** — clicking a bar
+  or a box-plot group adds an `eq` filter on the category it represents.
+  Histogram bins and scatter points don't map onto a single-column `eq`
+  filter as cleanly (a bin is a numeric range, a point is one row) — also
+  left as a fast-follow rather than forced into the same mechanism.
+- **Frontend**: new `FilterContext` (global state — one condition per
+  column; setting a new one on the same column replaces rather than stacks,
+  so the filter bar's chips stay simple to read), `FilterBar` (chips under
+  `TopBar`, visible everywhere), `MatchingRowsPanel` (paginated drill-down
+  table, opens automatically on every new filter). `BarChart`/`BoxPlotView`
+  got optional click handlers; `ChartRenderer` threads `columns`/`onDrillDown`
+  through to them without touching the other three chart types.
+- **Verified with a real HTTP flow simulating the actual click path**:
+  upload → get chart recommendations → simulate clicking the "North" bar
+  → confirm EDA overview, `filtered-rows`, and `chart-recommendations` all
+  independently agree on the same filtered subset (3 of 6 rows) — not just
+  that each endpoint works in isolation, but that they're consistent with
+  each other under the same filter.
+- 16 new `pytest` tests for `apply_filter`'s operators and the JSON-safety
+  conversion (`_json_safe`) `filtered-rows` needs for numpy/NaN/Timestamp
+  values — 185 tests total now, all passing.
+
+
+## Smart Report Builder — session 13 (AI curation + editable outline + live preview)
+
+New feature: the Report tab is now a genuine builder rather than a
+fixed-structure generator with a format picker. Combines three things you
+asked for explicitly — AI auto-curation, an editable outline (drag-and-drop,
+not just up/down buttons — the harder option you picked), and
+natural-language steering — all feeding into the same, now-extended
+`report_engine.py` renderers rather than replacing them.
+
+- **`report_engine.py` refactored to be section-driven**: `render_markdown`,
+  `render_html`, and `render_pdf` each now build a `dict` of independent
+  per-section closures (`{key: builder_fn}`) instead of one long sequence of
+  hardcoded appends, then filter+order by an optional `section_order`
+  parameter (`None` = every section, in the original default order — fully
+  backward compatible with every pre-session-13 call site, verified by the
+  full existing report test suite passing unchanged). New canonical
+  `SECTION_REGISTRY` constant is the single source of truth for section
+  keys/labels/order, imported by both the renderers and the new curation
+  engine — no separately-maintained copy to drift out of sync.
+- **New `app/engines/report_builder_engine.py`**: the AI curation step.
+  Reuses `copilot_engine.py`'s exact read-only tool set rather than
+  redefining it (noted in-line as "second consumer — promote to its own
+  module if a third ever needs it, not preemptively"). Returns a *plan*
+  (which sections to include and why, which of the session's completed
+  analyses are most relevant) — never renders anything itself. An optional
+  `user_request` ("focus this on regional performance") is treated as the
+  deciding factor over the general investigation goal when given. Same
+  grounding-check discipline as the AI Insight and Copilot features.
+- **Plan reconciliation is defensive by construction**: any section key the
+  model invents is dropped; any real section it forgot to mention defaults
+  to included (a well-rounded report, not a silently incomplete one); any
+  analysis index outside the actual `available_analyses` list passed in is
+  dropped. Verified with dedicated tests feeding the engine adversarial
+  fake responses (invented keys, out-of-range indices) rather than only
+  well-formed ones.
+- **New endpoint** `POST /report/draft-plan`; the existing `POST /report`
+  gained an optional `section_order` field, otherwise unchanged.
+- **Frontend**: `SectionOutline.jsx` — true drag-and-drop (your call, over
+  simpler up/down buttons), hand-rolled on the Pointer Events API rather
+  than a new dependency or the HTML5 Drag-and-Drop API, specifically
+  because Pointer Events unify mouse and touch and this app has real mobile
+  support to preserve (session 4). `ReportWorkspace.jsx` rebuilt around it:
+  a "Draft with AI" input + button, the draggable/toggleable outline, the
+  existing analyses checklist (now pre-checked from the AI's picks when a
+  draft has run), a format picker, and a live markdown preview that
+  debounce-refetches (400ms) on every outline change — always reflecting
+  exactly what Generate would produce, since both call the identical
+  `POST /report` payload shape.
+- **Verified end-to-end with the actual frontend flow simulated over real
+  HTTP**: upload → request a 3-section outline
+  (`executive_summary`/`quality_report`/`limitations`) via the preview
+  call → confirm the markdown contains exactly those 3 sections in that
+  order and nothing else → generate the *same* outline as a PDF → confirm
+  it's a valid 1-page PDF. Preview and final download aren't just similar,
+  they're provably the same code path with the same inputs.
+- 14 new tests (6 for `section_order` filtering across all three formats,
+  8 for the curation engine's plan reconciliation) — 199 tests total now,
+  all passing.
+
+
+## Installable web app (PWA) — session 14
+
+Added standalone-app installability without changing what this fundamentally
+is (a web app, not a native one) — "transform into an app" turned out to
+mean "installable web app" once we talked through what was already in
+place (Docker + a Render Blueprint were already done in session 8).
+
+**What was added:**
+- `frontend/public/manifest.webmanifest` — name, icons, `display: standalone`,
+  theme color matching the existing graphite/amber palette.
+- A generated icon set (`icon-192.png`, `icon-512.png`,
+  `icon-512-maskable.png`, `apple-touch-icon.png`) drawn to match the app's
+  actual color tokens, plus `favicon.svg` — which `index.html` referenced
+  from session 1 onward but which never actually existed as a file. Fixed
+  in passing.
+- `frontend/public/sw.js` — deliberately minimal service worker. Network-first
+  for the HTML shell, stale-while-revalidate for hashed static assets, and
+  **`/api/*` is never intercepted** — caching a live analysis result would be
+  actively wrong for an app whose entire point is fresh computation on
+  whatever the user just uploaded. Registered in `main.jsx` after page load
+  so it can't delay first paint, and no-ops harmlessly if registration fails.
+- `nginx.conf`: `sw.js` served with `Cache-Control: no-cache` (so the
+  docker-compose/self-hosted path always picks up service-worker updates)
+  and an explicit `application/manifest+json` type for the manifest.
+
+**What wasn't changed:** no new dependency, no new backend route, no change
+to `render.yaml` — none of this needed it. `requirements.txt` didn't move
+either; the six spec-driven engines added earlier this session only use
+pandas/numpy/pydantic, already in the image.
+
+**Known gap, stated plainly:** the Render *static site* hosting path (as
+opposed to the docker-compose/nginx path) has no way to set the `sw.js`
+no-cache header from `render.yaml` — Render only exposes custom static-site
+headers through its Dashboard, not the Blueprint spec (confirmed against
+Render's own docs). In practice this is a soft gap, not a broken one:
+browsers already refuse to cache a service-worker script for more than 24
+hours regardless of server headers, so updates still land — just not
+instantly on that specific hosting path.
+
+**On "deploy it live":** this environment has no Docker daemon and no
+hosting-account access (same constraint as session 8, still true), so I
+can't provision an actual running URL from here. The Render Blueprint from
+session 8 is still the fastest path to one — push to GitHub, "New >
+Blueprint" on Render, paste an API key when prompted, done. That part hasn't
+changed; this session made the result installable once it's up, not the
+"getting it up" part.
 
 ## Design notes / known limitations (Phase 1)
 

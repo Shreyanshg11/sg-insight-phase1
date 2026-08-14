@@ -1,6 +1,7 @@
 import uuid
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from app.core.session_store import store
+from app.core.filtering import apply_filter, parse_filters_query
 from app.models.schemas import (
     ChartRecommendationResponse, ExplainChartRequest, ExplainChartResponse,
     PinChartRequest, UnpinChartRequest, DashboardResponse, DashboardChart,
@@ -18,9 +19,13 @@ def _get_session(dataset_id: str):
 
 
 @router.get("/{dataset_id}/chart-recommendations", response_model=ChartRecommendationResponse)
-async def get_chart_recommendations(dataset_id: str):
+async def get_chart_recommendations(dataset_id: str, filters: list = Depends(parse_filters_query)):
     session = _get_session(dataset_id)
-    recs = recommend_charts(session.current, session.goal_keywords)
+    try:
+        df = apply_filter(session.current, filters)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    recs = recommend_charts(df, session.goal_keywords)
     return ChartRecommendationResponse(dataset_id=dataset_id, recommendations=recs)
 
 

@@ -11,6 +11,7 @@ import TabNav from "./ui/TabNav";
 import LoadingState from "./ui/LoadingState";
 import ErrorState from "./ui/ErrorState";
 import EmptyState from "./ui/EmptyState";
+import { useFilters } from "../context/FilterContext";
 
 const SECTIONS = [
   { key: "overview", label: "Overview" },
@@ -26,6 +27,10 @@ const SECTIONS = [
  * Each section is independently fetchable (#13) — the sub-nav below switches
  * between them without ever running one monolithic "compute everything" call,
  * matching the shape PipelineNav already anticipated for the EDA stage.
+ *
+ * Filter-aware (session 12): every section recomputes against the active
+ * global filter, if any — correlation/missing-patterns caches are cleared
+ * on filter change so they refetch rather than showing a stale view.
  */
 export default function EDAWorkspace({ datasetId }) {
   const [activeSection, setActiveSection] = useState("overview");
@@ -34,6 +39,7 @@ export default function EDAWorkspace({ datasetId }) {
   const [missingPatterns, setMissingPatterns] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const { filters } = useFilters();
 
   const [distColumn, setDistColumn] = useState(null);
   const [categoryColumn, setCategoryColumn] = useState(null);
@@ -45,7 +51,7 @@ export default function EDAWorkspace({ datasetId }) {
     setLoading(true);
     setError(null);
     try {
-      const ov = await getEDAOverview(datasetId);
+      const ov = await getEDAOverview(datasetId, filters);
       setOverview(ov);
       const allNumericLike = [...ov.numeric_columns, ...ov.categorical_columns];
       setDistColumn((prev) => prev || allNumericLike[0] || null);
@@ -58,18 +64,22 @@ export default function EDAWorkspace({ datasetId }) {
     } finally {
       setLoading(false);
     }
-  }, [datasetId]);
+  }, [datasetId, filters]);
 
   useEffect(() => { loadOverview(); }, [loadOverview]);
 
+  // Filter changed — cached correlation/missing-patterns no longer reflect
+  // the active view, so drop them and let the effect below refetch.
+  useEffect(() => { setCorrelation(null); setMissingPatterns(null); }, [filters]);
+
   useEffect(() => {
     if (activeSection === "correlation" && !correlation) {
-      getEDACorrelation(datasetId).then(setCorrelation).catch((e) => setError(e.message));
+      getEDACorrelation(datasetId, filters).then(setCorrelation).catch((e) => setError(e.message));
     }
     if (activeSection === "missing_patterns" && !missingPatterns) {
-      getEDAMissingPatterns(datasetId).then(setMissingPatterns).catch((e) => setError(e.message));
+      getEDAMissingPatterns(datasetId, filters).then(setMissingPatterns).catch((e) => setError(e.message));
     }
-  }, [activeSection, datasetId, correlation, missingPatterns]);
+  }, [activeSection, datasetId, filters, correlation, missingPatterns]);
 
   if (loading && !overview) {
     return <LoadingState message="Loading EDA overview…" />;
@@ -103,7 +113,7 @@ export default function EDAWorkspace({ datasetId }) {
         {activeSection === "overview" && <EDAOverview data={overview} />}
 
         {activeSection === "distributions" && (
-          <EDADistribution datasetId={datasetId} columns={allColumns} selected={distColumn} onSelect={setDistColumn} />
+          <EDADistribution datasetId={datasetId} columns={allColumns} selected={distColumn} onSelect={setDistColumn} filters={filters} />
         )}
 
         {activeSection === "correlation" && (
@@ -120,17 +130,18 @@ export default function EDAWorkspace({ datasetId }) {
             allColumns={allColumns}
             x={relX} y={relY}
             onSelectX={setRelX} onSelectY={setRelY}
+            filters={filters}
           />
         )}
 
         {activeSection === "category_analysis" && (
           overview.categorical_columns.length > 0
-            ? <EDACategoryAnalysis datasetId={datasetId} columns={overview.categorical_columns} selected={categoryColumn} onSelect={setCategoryColumn} />
+            ? <EDACategoryAnalysis datasetId={datasetId} columns={overview.categorical_columns} selected={categoryColumn} onSelect={setCategoryColumn} filters={filters} />
             : <EmptyState message="No categorical columns detected in this dataset." />
         )}
 
         {activeSection === "time_analysis" && (
-          <EDATimeAnalysis datasetId={datasetId} columns={overview.date_columns} selected={timeColumn} onSelect={setTimeColumn} />
+          <EDATimeAnalysis datasetId={datasetId} columns={overview.date_columns} selected={timeColumn} onSelect={setTimeColumn} filters={filters} />
         )}
       </div>
     </div>

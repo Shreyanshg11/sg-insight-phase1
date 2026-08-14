@@ -4,11 +4,13 @@ import ChartRenderer from "../charts/ChartRenderer";
 import LoadingState from "../ui/LoadingState";
 import ErrorState from "../ui/ErrorState";
 import EmptyState from "../ui/EmptyState";
+import { useFilters } from "../../context/FilterContext";
 
 export default function DashboardWorkspace({ datasetId }) {
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const { addFilter } = useFilters();
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -72,7 +74,7 @@ export default function DashboardWorkspace({ datasetId }) {
               </div>
             ) : (
               <div className="mt-3">
-                <ChartRenderer chartType={chart.chart_type} data={chart.data} trend={chart.trend} />
+                <ChartRenderer chartType={chart.chart_type} data={chart.data} trend={chart.trend} columns={chart.columns} onDrillDown={addFilter} />
               </div>
             )}
           </div>

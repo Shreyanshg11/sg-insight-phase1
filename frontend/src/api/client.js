@@ -20,6 +20,20 @@ export async function uploadDataset(file, investigationGoal) {
   return handle(res);
 }
 
+export async function listSamples() {
+  const res = await fetch(`${BASE_URL}/api/dataset/samples`);
+  return handle(res);
+}
+
+export async function loadSample(sampleId) {
+  const res = await fetch(`${BASE_URL}/api/dataset/samples/${sampleId}/load`, { method: "POST" });
+  return handle(res);
+}
+
+export function exampleReportUrl(sampleId) {
+  return `${BASE_URL}/api/dataset/samples/${sampleId}/example-report`;
+}
+
 export async function getProfile(datasetId) {
   const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/profile`);
   return handle(res);
@@ -101,40 +115,53 @@ export async function applyFeatureAction(payload) {
 
 // ---------- EDA module navigation (#13) ----------
 
-export async function getEDAOverview(datasetId) {
-  const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/eda/overview`);
+// `filters`: optional array of {column, op, value} — the active Interactive
+// Investigation filter (session 12). Serialized as a JSON query param since
+// these are GET requests; empty/omitted means "whole dataset", same as before.
+function buildQuery(params) {
+  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== "");
+  if (!entries.length) return "";
+  return "?" + entries.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+}
+
+function filtersQueryValue(filters) {
+  return filters && filters.length ? JSON.stringify(filters) : undefined;
+}
+
+export async function getEDAOverview(datasetId, filters) {
+  const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/eda/overview${buildQuery({ filters: filtersQueryValue(filters) })}`);
   return handle(res);
 }
 
-export async function getEDADistribution(datasetId, column) {
-  const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/eda/distribution?column=${encodeURIComponent(column)}`);
+export async function getEDADistribution(datasetId, column, filters) {
+  const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/eda/distribution${buildQuery({ column, filters: filtersQueryValue(filters) })}`);
   return handle(res);
 }
 
-export async function getEDACorrelation(datasetId) {
-  const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/eda/correlation`);
+export async function getEDACorrelation(datasetId, filters) {
+  const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/eda/correlation${buildQuery({ filters: filtersQueryValue(filters) })}`);
   return handle(res);
 }
 
-export async function getEDAMissingPatterns(datasetId) {
-  const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/eda/missing-patterns`);
+export async function getEDAMissingPatterns(datasetId, filters) {
+  const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/eda/missing-patterns${buildQuery({ filters: filtersQueryValue(filters) })}`);
   return handle(res);
 }
 
-export async function getEDARelationships(datasetId, columnX, columnY) {
+export async function getEDARelationships(datasetId, columnX, columnY, filters) {
   const res = await fetch(
-    `${BASE_URL}/api/dataset/${datasetId}/eda/relationships?column_x=${encodeURIComponent(columnX)}&column_y=${encodeURIComponent(columnY)}`
+    `${BASE_URL}/api/dataset/${datasetId}/eda/relationships${buildQuery({ column_x: columnX, column_y: columnY, filters: filtersQueryValue(filters) })}`
   );
   return handle(res);
 }
 
-export async function getEDACategoryAnalysis(datasetId, column) {
-  const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/eda/category-analysis?column=${encodeURIComponent(column)}`);
+export async function getEDACategoryAnalysis(datasetId, column, filters) {
+  const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/eda/category-analysis${buildQuery({ column, filters: filtersQueryValue(filters) })}`);
   return handle(res);
 }
 
-export async function getEDATimeAnalysis(datasetId, column) {
-  const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/eda/time-analysis?column=${encodeURIComponent(column)}`);
+export async function getEDATimeAnalysis(datasetId, column, filters) {
+  const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/eda/time-analysis${buildQuery({ column, filters: filtersQueryValue(filters) })}`);
   return handle(res);
 }
 
@@ -165,8 +192,26 @@ export async function getAIInsight(payload) {
 
 // ---------- Visualization Engine (#16) + Dashboard Builder (#17) ----------
 
-export async function getChartRecommendations(datasetId) {
-  const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/chart-recommendations`);
+export async function getChartRecommendations(datasetId, filters) {
+  const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/chart-recommendations${buildQuery({ filters: filtersQueryValue(filters) })}`);
+  return handle(res);
+}
+
+export async function getFilteredRows(datasetId, filters, page = 1, pageSize = 25) {
+  const res = await fetch(`${BASE_URL}/api/dataset/filtered-rows`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dataset_id: datasetId, filters: filters || [], page, page_size: pageSize }),
+  });
+  return handle(res);
+}
+
+export async function buildChartFiltered(datasetId, chartType, columns, filters) {
+  const res = await fetch(`${BASE_URL}/api/dataset/build-chart`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dataset_id: datasetId, chart_type: chartType, columns, filters: filters || [] }),
+  });
   return handle(res);
 }
 
@@ -197,12 +242,59 @@ export async function unpinChart(datasetId, chartId) {
   return handle(res);
 }
 
+export async function sendCopilotMessage(datasetId, message, history) {
+  const res = await fetch(`${BASE_URL}/api/dataset/copilot/message`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dataset_id: datasetId, message, history }),
+  });
+  return handle(res);
+}
+
+export async function confirmCopilotAction(datasetId, proposedAction) {
+  const res = await fetch(`${BASE_URL}/api/dataset/copilot/confirm-action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dataset_id: datasetId, proposed_action: proposedAction }),
+  });
+  return handle(res);
+}
+
 export async function getDashboard(datasetId) {
   const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/dashboard`);
   return handle(res);
 }
 
 // ---------- Report Generation (final pipeline stage) ----------
+
+export async function draftReportPlan(datasetId, availableAnalyses, userRequest) {
+  const res = await fetch(`${BASE_URL}/api/dataset/report/draft-plan`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dataset_id: datasetId, available_analyses: availableAnalyses, user_request: userRequest || null }),
+  });
+  return handle(res);
+}
+
+export async function previewReport(payload) {
+  // Same endpoint as generateReport, but returns text directly rather than
+  // triggering a file download — used for the Smart Report Builder's live
+  // preview (session 13), which re-fetches on every outline change.
+  const res = await fetch(`${BASE_URL}/api/dataset/report`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      detail = body.detail || detail;
+    } catch (_) {}
+    throw new Error(detail);
+  }
+  return res.text();
+}
 
 export async function generateReport(payload) {
   const res = await fetch(`${BASE_URL}/api/dataset/report`, {

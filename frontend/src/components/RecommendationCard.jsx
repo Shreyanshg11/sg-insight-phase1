@@ -17,6 +17,26 @@ const STEP_LABELS = {
   log_transform: "Log Transform",
 };
 
+const VALUE_TIER_STYLES = {
+  high_value: { label: "High value", className: "bg-signal-green/15 text-signal-green" },
+  situational: { label: "Situational", className: "bg-graphite-700 text-ink-500" },
+  risky: { label: "Risky", className: "bg-signal-red/15 text-signal-red" },
+  redundant: { label: "Redundant", className: "bg-signal-amberDim/25 text-signal-amber" },
+};
+
+const OUTLIER_TIER_STYLES = {
+  likely_data_entry_error: { label: "Likely error", className: "text-signal-red" },
+  legitimate_rare_value: { label: "Legitimate rare", className: "text-signal-green" },
+  statistically_unusual: { label: "Unusual", className: "text-ink-500" },
+};
+
+const MISSINGNESS_STYLES = {
+  structural: { label: "Structural", className: "bg-signal-green/15 text-signal-green" },
+  conditional: { label: "Conditional", className: "bg-signal-amberDim/25 text-signal-amber" },
+  random: { label: "Random", className: "bg-graphite-700 text-ink-500" },
+  insufficient_data: { label: "Insufficient data", className: "bg-graphite-700 text-ink-500" },
+};
+
 function BeforeAfterPreview({ preview }) {
   const hasSamples = preview.before_sample !== undefined || preview.after_sample !== undefined;
   if (!hasSamples) return null;
@@ -34,6 +54,43 @@ function BeforeAfterPreview({ preview }) {
           {preview.after_sample?.length ? preview.after_sample.join(", ") : "(removed)"}
         </p>
       </div>
+    </div>
+  );
+}
+
+function OutlierTierBreakdown({ preview }) {
+  const counts = preview.tier_counts;
+  if (!counts) return null;
+  return (
+    <div className="mt-3 rounded border border-graphite-border bg-graphite-900 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-mono text-[11px] uppercase tracking-wider text-ink-500">Outlier breakdown</p>
+        {(preview.far_out_lower !== undefined) && (
+          <p className="font-mono text-[10px] text-ink-700">
+            Far-out fence: [{preview.far_out_lower}, {preview.far_out_upper}]
+          </p>
+        )}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-4">
+        {Object.entries(OUTLIER_TIER_STYLES).map(([key, style]) => (
+          <span key={key} className={`font-mono text-xs ${style.className}`}>
+            {style.label}: {counts[key] ?? 0}
+          </span>
+        ))}
+      </div>
+      {preview.sample_outliers?.length > 0 && (
+        <div className="mt-3 space-y-1 border-t border-graphite-border pt-2">
+          {preview.sample_outliers.map((p, i) => (
+            <div key={i} className="flex items-start justify-between gap-2 font-mono text-[11px]">
+              <span className="text-ink-300">{p.value}</span>
+              <span className={OUTLIER_TIER_STYLES[p.tier]?.className || "text-ink-500"}>
+                {OUTLIER_TIER_STYLES[p.tier]?.label || p.tier}
+              </span>
+              <span className="flex-1 text-right text-ink-700">{p.evidence?.[0]}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -183,6 +240,7 @@ export default function RecommendationCard({ recommendation, onConfirm, onDismis
 
   const isFuzzyMerge = recommendation.step === "category_merge_center" && recommendation.recommended_action === "fuzzy_merge";
   const isMissingValue = recommendation.step === "missing_value_center";
+  const isOutlier = recommendation.step === "outlier_center";
 
   const handleApply = async (overrides = {}) => {
     setStatus("applying");
@@ -201,9 +259,13 @@ export default function RecommendationCard({ recommendation, onConfirm, onDismis
     onDismiss?.(recommendation);
   };
 
-  const hasExplainability = recommendation.how_detected || recommendation.risks?.length > 0 || recommendation.alternative_actions?.length > 0;
+  const hasExplainability = recommendation.how_detected || recommendation.risks?.length > 0 ||
+    recommendation.alternative_actions?.length > 0 || recommendation.value_tier_reason;
   const hasOtherPreviewFields = Object.keys(recommendation.preview || {}).some(
-    (k) => !["before_sample", "after_sample", "values", "suggested_canonical", "similarity"].includes(k)
+    (k) => ![
+      "before_sample", "after_sample", "values", "suggested_canonical", "similarity",
+      "tier_counts", "sample_outliers", "far_out_lower", "far_out_upper",
+    ].includes(k)
   );
 
   return (
@@ -219,6 +281,23 @@ export default function RecommendationCard({ recommendation, onConfirm, onDismis
               <span className="rounded-full bg-signal-amber/15 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-signal-amber">
                 Goal relevant
               </span>
+            )}
+            {recommendation.value_tier && VALUE_TIER_STYLES[recommendation.value_tier] && (
+              <span className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ${VALUE_TIER_STYLES[recommendation.value_tier].className}`}>
+                {VALUE_TIER_STYLES[recommendation.value_tier].label}
+              </span>
+            )}
+            {recommendation.step === "missing_value_center" &&
+              recommendation.preview?.missingness_classification &&
+              MISSINGNESS_STYLES[recommendation.preview.missingness_classification] && (
+                <span
+                  className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ${MISSINGNESS_STYLES[recommendation.preview.missingness_classification].className}`}
+                  title={recommendation.preview.missingness_predictor_column
+                    ? `Predicted by '${recommendation.preview.missingness_predictor_column}'`
+                    : undefined}
+                >
+                  {MISSINGNESS_STYLES[recommendation.preview.missingness_classification].label} missingness
+                </span>
             )}
           </div>
           <p className="mt-1 font-display text-sm font-medium text-ink-100">
@@ -237,6 +316,8 @@ export default function RecommendationCard({ recommendation, onConfirm, onDismis
       )}
 
       {!isFuzzyMerge && <div className="mt-3"><BeforeAfterPreview preview={recommendation.preview || {}} /></div>}
+
+      {isOutlier && <OutlierTierBreakdown preview={recommendation.preview || {}} />}
 
       {isFuzzyMerge && (
         <FuzzyMergeControls recommendation={recommendation} onConfirm={onConfirm} setStatus={setStatus} />
@@ -269,6 +350,14 @@ export default function RecommendationCard({ recommendation, onConfirm, onDismis
           </button>
           {showExplain && (
             <div className="mt-2 space-y-2 rounded border border-graphite-border bg-graphite-900 p-3 text-xs">
+              {recommendation.value_tier_reason && (
+                <div>
+                  <p className="font-mono uppercase tracking-wider text-ink-500">
+                    Why {VALUE_TIER_STYLES[recommendation.value_tier]?.label.toLowerCase() || recommendation.value_tier}
+                  </p>
+                  <p className="mt-0.5 text-ink-300">{recommendation.value_tier_reason}</p>
+                </div>
+              )}
               {recommendation.how_detected && (
                 <div>
                   <p className="font-mono uppercase tracking-wider text-ink-500">How this was detected</p>

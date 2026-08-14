@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 from app.engines.warnings_engine import generate_warnings
 
@@ -24,3 +25,18 @@ class TestGenerateWarnings:
     def test_target_candidates_param_accepted(self, messy_df):
         # shouldn't raise, whether or not it changes output
         generate_warnings(messy_df, target_candidates=["region"])
+
+    def test_zero_variance_pair_does_not_raise_or_warn(self):
+        # A numeric column that's only non-null within one value of a
+        # boolean-like target candidate is constant after the dropna-aligned
+        # subset — correlation is undefined there, and this should be
+        # skipped cleanly rather than let numpy divide by zero.
+        import warnings as pywarnings
+        df = pd.DataFrame({
+            "has_pool": [True] * 20 + [False] * 20,
+            "pool_size_sqft": [300.0] * 20 + [np.nan] * 20,  # constant among non-null rows
+        })
+        with pywarnings.catch_warnings():
+            pywarnings.simplefilter("error")
+            result = generate_warnings(df, target_candidates=["has_pool"])
+        assert isinstance(result, list)

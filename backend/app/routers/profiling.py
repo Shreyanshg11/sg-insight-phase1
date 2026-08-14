@@ -4,6 +4,7 @@ from app.models.schemas import ProfileResponse, QualityResponse, WarningsRespons
 from app.engines.profiling_engine import profile_dataset
 from app.engines.cleaning_engine import compute_quality_score, generate_recommendations
 from app.engines.warnings_engine import generate_warnings
+from app.engines.quality_engine import compute_analytical_risk, compute_readiness
 
 router = APIRouter(prefix="/api/dataset", tags=["profiling"])
 
@@ -27,7 +28,11 @@ async def get_quality(dataset_id: str):
     df = session.current
     score = compute_quality_score(df)
     recs = generate_recommendations(df, session.goal_keywords)
-    return QualityResponse(dataset_id=dataset_id, score=score, recommendations=recs)
+    profile = profile_dataset(dataset_id, df, session.investigation_goal, session.goal_keywords)
+    analytical_risk = compute_analytical_risk(df, profile.target_candidates)
+    readiness = compute_readiness(df, profile.target_candidates)
+    return QualityResponse(dataset_id=dataset_id, score=score, recommendations=recs,
+                            analytical_risk=analytical_risk, readiness=readiness)
 
 
 @router.get("/{dataset_id}/warnings", response_model=WarningsResponse)

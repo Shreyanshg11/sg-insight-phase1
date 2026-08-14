@@ -5,6 +5,7 @@ import {
 } from "../api/client";
 import ProfileSummary from "../components/ProfileSummary";
 import QualityScorePanel from "../components/QualityScorePanel";
+import { AnalyticalRiskPanel, ReadinessPanel } from "../components/RiskReadinessPanels";
 import RecommendationCard from "../components/RecommendationCard";
 import WarningsPanel from "../components/WarningsPanel";
 import HealthDashboard from "../components/HealthDashboard";
@@ -13,6 +14,7 @@ import TopBar from "../components/layout/TopBar";
 import PipelineNav from "../components/layout/PipelineNav";
 import SessionContextPanel from "../components/layout/SessionContextPanel";
 import RecentActionsPanel from "../components/layout/RecentActionsPanel";
+import CopilotPanel from "../components/copilot/CopilotPanel";
 import ComingSoonPanel from "../components/layout/ComingSoonPanel";
 import FeatureEngineeringCenter from "../components/FeatureEngineeringCenter";
 import EDAWorkspace from "../components/EDAWorkspace";
@@ -20,6 +22,10 @@ import AnalysisWorkspace from "../components/analysis/AnalysisWorkspace";
 import VisualizationWorkspace from "../components/charts/VisualizationWorkspace";
 import DashboardWorkspace from "../components/dashboard/DashboardWorkspace";
 import ReportWorkspace from "../components/report/ReportWorkspace";
+import TourGuide from "../components/tour/TourGuide";
+import { FilterProvider } from "../context/FilterContext";
+import FilterBar from "../components/filtering/FilterBar";
+import MatchingRowsPanel from "../components/filtering/MatchingRowsPanel";
 import LoadingState from "../components/ui/LoadingState";
 import ErrorState from "../components/ui/ErrorState";
 import EmptyState from "../components/ui/EmptyState";
@@ -60,6 +66,7 @@ export default function WorkbenchPage({ dataset }) {
 
   const [activeView, setActiveView] = useState("pipeline"); // "pipeline" | "versions"
   const [activeStage, setActiveStage] = useState("profile");
+  const [tourOpen, setTourOpen] = useState(false);
   const [completedAnalyses, setCompletedAnalyses] = useState([]);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileAsideOpen, setMobileAsideOpen] = useState(false);
@@ -160,7 +167,13 @@ export default function WorkbenchPage({ dataset }) {
       );
     }
     if (activeStage === "quality") {
-      return <div className="max-w-md">{quality && <QualityScorePanel score={quality.score} />}</div>;
+      return (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          {quality && <QualityScorePanel score={quality.score} />}
+          {quality?.analytical_risk && <AnalyticalRiskPanel risk={quality.analytical_risk} />}
+          {quality?.readiness && <ReadinessPanel readiness={quality.readiness} />}
+        </div>
+      );
     }
     if (activeStage === "cleaning") {
       return (
@@ -217,6 +230,7 @@ export default function WorkbenchPage({ dataset }) {
   };
 
   return (
+    <FilterProvider>
     <div className="flex h-screen flex-col bg-graphite-950">
       <TopBar
         dataset={dataset}
@@ -229,6 +243,19 @@ export default function WorkbenchPage({ dataset }) {
         onToggleNav={() => setMobileNavOpen((v) => !v)}
         onToggleAside={() => setMobileAsideOpen((v) => !v)}
       />
+      <FilterBar />
+      <button
+        onClick={() => setTourOpen(true)}
+        className="fixed bottom-4 left-4 z-40 rounded-full border border-signal-amber/50 bg-graphite-900 px-3 py-1.5 font-mono text-xs text-signal-amber shadow hover:bg-signal-amber/10"
+      >
+        Take a tour
+      </button>
+      {tourOpen && (
+        <TourGuide
+          onSelectStage={(stage) => { setActiveStage(stage); setActiveView("pipeline"); }}
+          onClose={() => setTourOpen(false)}
+        />
+      )}
 
       <div className="flex flex-1 overflow-hidden">
         <PipelineNav
@@ -262,15 +289,18 @@ export default function WorkbenchPage({ dataset }) {
           />
         )}
         <aside
-          className={`fixed inset-y-0 right-0 z-40 w-72 max-w-[85vw] flex-shrink-0 space-y-4 overflow-y-auto border-l border-graphite-border bg-graphite-900 p-4 transition-transform duration-200 lg:static lg:z-auto lg:max-w-none lg:translate-x-0 ${
+          className={`fixed inset-y-0 right-0 z-40 w-96 max-w-[85vw] flex-shrink-0 space-y-4 overflow-y-auto border-l border-graphite-border bg-graphite-900 p-4 transition-transform duration-200 lg:static lg:z-auto lg:max-w-none lg:translate-x-0 ${
             mobileAsideOpen ? "translate-x-0" : "translate-x-full"
           }`}
         >
+          <CopilotPanel datasetId={dataset.dataset_id} onActionApplied={refresh} />
           <SessionContextPanel goal={goal} goalRelevantColumns={profile?.goal_relevant_columns} />
           {warnings && <WarningsPanel warnings={warnings.warnings} />}
           <RecentActionsPanel history={history?.history} />
         </aside>
       </div>
+      <MatchingRowsPanel datasetId={dataset.dataset_id} />
     </div>
+    </FilterProvider>
   );
 }

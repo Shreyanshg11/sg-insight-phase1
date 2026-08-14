@@ -4,7 +4,7 @@ import ChartRenderer from "./ChartRenderer";
 import { explainChart, pinChart } from "../../api/client";
 import ErrorState from "../ui/ErrorState";
 
-export default function ChartRecommendationCard({ datasetId, rec }) {
+export default function ChartRecommendationCard({ datasetId, rec, onDrillDown }) {
   const [explanation, setExplanation] = useState(null);
   const [explaining, setExplaining] = useState(false);
   const [pinState, setPinState] = useState("idle"); // idle | pinning | pinned | error
@@ -46,7 +46,7 @@ export default function ChartRecommendationCard({ datasetId, rec }) {
       </div>
 
       <div className="mt-3">
-        <ChartRenderer chartType={rec.chart_type} data={rec.data} trend={rec.trend} />
+        <ChartRenderer chartType={rec.chart_type} data={rec.data} trend={rec.trend} columns={rec.columns} onDrillDown={onDrillDown} />
       </div>
 
       {rec.alternative_chart_types.length > 0 && (

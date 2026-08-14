@@ -11,6 +11,8 @@ import pandas as pd
 import numpy as np
 from app.models.schemas import QualityScore, QualityBreakdownItem, CleaningRecommendation
 from app.core.dtype_utils import stringy_columns
+from app.engines.missingness_engine import classify_missingness
+from app.engines.outlier_engine import classify_outliers_for_column
 
 # Fuzzy category merge (#7): a small built-in alias table for well-known
 # abbreviation cases called out explicitly in the brief (USA/US/United States),
@@ -245,6 +247,7 @@ def generate_recommendations(df: pd.DataFrame, goal_keywords: list[str] | None =
     goal_keywords = goal_keywords or []
     recs: list[CleaningRecommendation] = []
     n_rows = len(df)
+    missingness_map = classify_missingness(df)  # column -> MissingnessClassification, only for columns with any missing
 
     def _is_goal_relevant(column: str | None) -> bool:
         if not column or not goal_keywords:
@@ -283,12 +286,33 @@ def generate_recommendations(df: pd.DataFrame, goal_keywords: list[str] | None =
             continue
         missing_pct = missing / n_rows if n_rows else 0
         alternatives = ["impute_mean", "impute_median", "impute_mode", "drop_rows", "drop_column"]
-        if missing_pct > 0.6:
+        classification = missingness_map.get(col)
+        is_structural = classification is not None and classification.classification == "structural"
+
+        if is_structural:
+            # Missing-by-design: the old ">60% -> drop_column" rule used to fire
+            # here regardless of *why* the column was missing, which is exactly
+            # the bug this classification exists to prevent (see missingness_engine).
+            action, confidence = "ignore", classification.confidence
+            reason = ("Missingness looks structural (missing by design), not a data-quality defect: " +
+                      " ".join(classification.evidence) + " " + classification.recommendation_hint)
+            how = f"missingness_engine classified this column as 'structural' — see reason for the evidence."
+            risks = ["If this assumption is wrong and the values are actually just lost/uncollected, "
+                     "leaving them as NaN understates real missingness elsewhere (e.g. in aggregates)."]
+            alternatives = ["impute_constant", "drop_rows", "drop_column"]
+        elif missing_pct > 0.6:
             action, reason, confidence, how = "drop_column", (
                 f"{round(missing_pct*100,1)}% of values are missing — above the ~60% threshold "
                 "where imputation typically introduces more noise than signal."
             ), 0.7, "Missing-value ratio compared against a fixed 60% threshold."
             risks = ["Discards the entire column, including whatever signal the non-missing 40% held."]
+            if classification is not None and classification.classification == "conditional":
+                confidence = round(confidence * 0.75, 2)
+                reason += (" Caveat: " + " ".join(classification.evidence) +
+                           " Dropping is still an option but may lose more signal than a purely random-missing "
+                           "column would, since the missingness itself correlates with other data.")
+                risks.append(f"Missingness correlates with '{classification.predictor_column}', so this isn't "
+                              "a clean MCAR case — consider group-aware imputation as an alternative.")
         elif pd.api.types.is_numeric_dtype(df[col]):
             skew = df[col].dropna().skew() if df[col].notna().sum() > 2 else 0
             if abs(skew) > 1:
@@ -317,7 +341,11 @@ def generate_recommendations(df: pd.DataFrame, goal_keywords: list[str] | None =
         # some recommended actions here (e.g. drop_column) don't have a single
         # simple "after value" to show per-row, so each case is spelled out.
         before_sample = df[col].dropna().head(5).tolist()
-        if action == "drop_column":
+        if action == "ignore":
+            after_sample = df[col].head(5).tolist()
+            rows_affected = 0
+            impact = f"No change applied — '{col}' is left as-is with its {missing} missing value(s) intact."
+        elif action == "drop_column":
             after_sample = []
             rows_affected = n_rows
             impact = f"Removes the '{col}' column entirely, discarding {n_rows - missing} non-missing value(s)."
@@ -348,48 +376,65 @@ def generate_recommendations(df: pd.DataFrame, goal_keywords: list[str] | None =
             confidence=confidence,
             preview={"missing_count": missing, "missing_pct": round(missing_pct * 100, 1),
                      "before_sample": before_sample, "after_sample": after_sample,
-                     "rows_affected": rows_affected, "estimated_impact": impact},
+                     "rows_affected": rows_affected, "estimated_impact": impact,
+                     "missingness_classification": classification.classification if classification else None,
+                     "missingness_predictor_column": classification.predictor_column if classification else None},
             how_detected=how,
             risks=risks,
             alternative_actions=[a for a in alternatives if a != action],
             goal_relevant=rec_goal_relevant,
         ))
 
-    # Outliers (IQR method) on numeric columns
+    # Outliers (IQR method, tiered via outlier_engine) on numeric columns
     for col in df.select_dtypes(include=[np.number]).columns:
-        series = df[col].dropna()
-        if len(series) < 8:
+        summary = classify_outliers_for_column(df, col)
+        if summary is None:
             continue
-        q1, q3 = series.quantile(0.25), series.quantile(0.75)
-        iqr = q3 - q1
-        if iqr == 0:
-            continue
-        lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
-        outliers = series[(series < lower) | (series > upper)]
-        if len(outliers) == 0:
-            continue
-        outlier_pct = len(outliers) / len(series)
-        # Confidence scales with how far outliers sit from the fence, capped sensibly
-        confidence = round(min(0.9, 0.5 + outlier_pct), 2)
+        outlier_pct = summary.total_outliers / len(df[col].dropna())
+        counts = summary.tier_counts
+        tier_summary = (f"{counts['likely_data_entry_error']} likely data-entry error(s), "
+                         f"{counts['legitimate_rare_value']} legitimate rare value(s), "
+                         f"{counts['statistically_unusual']} statistically unusual but unclassified")
+
+        # Column-level confidence: the highest per-point confidence among the
+        # points actually flagged as errors (if any) wins, since that's the
+        # single most actionable signal in the set; otherwise fall back to the
+        # average confidence across whatever was found. Keeps a single number
+        # for the recommendation card while the full per-point breakdown is
+        # still available in `preview` for anyone who wants to drill in.
+        error_points = [p for p in summary.points if p.tier == "likely_data_entry_error"]
+        if error_points:
+            confidence = max(p.confidence for p in error_points)
+        else:
+            confidence = round(float(np.mean([p.confidence for p in summary.points])), 2) if summary.points else 0.5
+
         recs.append(CleaningRecommendation(
             id=str(uuid.uuid4()),
             step="outlier_center",
             column=col,
-            issue=f"{len(outliers)} values outside IQR fences [{round(lower,2)}, {round(upper,2)}]",
+            issue=f"{summary.total_outliers} values outside IQR fences [{summary.lower_fence}, {summary.upper_fence}] "
+                  f"— {tier_summary}",
             recommended_action="flag_for_review",
-            reason=f"Standard 1.5×IQR rule: Q1={round(q1,2)}, Q3={round(q3,2)}, IQR={round(iqr,2)}. "
-                   "Flagged for review rather than auto-modified — outlier handling is context-dependent.",
+            reason=f"Standard 1.5×IQR rule: Q1={summary.q1}, Q3={summary.q3}, IQR={summary.iqr}. Each flagged "
+                   "value was further checked against a stricter 3.0×IQR 'far-out' fence, a decimal-point/"
+                   "unit-slip magnitude pattern (~10x or ~100x the median), and whether it repeats elsewhere in "
+                   f"the column — {tier_summary}. Flagged for review rather than auto-modified — outlier "
+                   "handling is context-dependent even for the 'likely error' tier.",
             confidence=confidence,
-            preview={"outlier_count": len(outliers), "lower_fence": round(lower, 2), "upper_fence": round(upper, 2),
-                     "sample_outliers": outliers.head(5).tolist(),
-                     "rows_affected": len(outliers),
+            preview={"outlier_count": summary.total_outliers, "lower_fence": summary.lower_fence,
+                     "upper_fence": summary.upper_fence, "far_out_lower": summary.far_out_lower,
+                     "far_out_upper": summary.far_out_upper, "tier_counts": counts,
+                     "sample_outliers": [p.model_dump() for p in summary.points[:5]],
+                     "rows_affected": summary.total_outliers,
                      "estimated_impact": f"{round(outlier_pct*100,1)}% of non-null values in '{col}' fall "
                                          "outside the fence. No change is applied until you pick ignore/"
                                          "convert-to-missing/clip/drop below."},
-            how_detected=f"1.5×IQR fence: values outside [{round(lower,2)}, {round(upper,2)}] "
-                         f"(Q1={round(q1,2)}, Q3={round(q3,2)}, IQR={round(iqr,2)}).",
+            how_detected=f"1.5×IQR fence: values outside [{summary.lower_fence}, {summary.upper_fence}] "
+                         f"(Q1={summary.q1}, Q3={summary.q3}, IQR={summary.iqr}), each point additionally "
+                         "tiered by far-out distance, magnitude pattern, and repetition (see outlier_engine).",
             risks=["A legitimate extreme value (not an error) could be clipped or dropped if you act on "
-                   "this without checking context."],
+                   "this without checking context — this applies even to values tiered as 'likely error', "
+                   "since the tiering is still a heuristic, not a certainty."],
             alternative_actions=["ignore", "convert_to_missing", "clip", "drop_rows"],
             goal_relevant=_is_goal_relevant(col),
         ))
@@ -492,7 +537,9 @@ def apply_action(df: pd.DataFrame, step: str, action: str, column: str | None, p
         if column is None:
             raise ValueError("column is required for missing_value_center actions")
         missing_before = int(out[column].isna().sum())
-        if action == "impute_mean":
+        if action == "ignore":
+            pass  # explicit no-op — used when missingness looks structural (missing by design)
+        elif action == "impute_mean":
             out[column] = out[column].fillna(out[column].mean())
         elif action == "impute_median":
             out[column] = out[column].fillna(out[column].median())

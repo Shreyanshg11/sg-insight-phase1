@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
-from app.engines.cleaning_engine import apply_action, compute_quality_score
+from app.engines.cleaning_engine import apply_action, compute_quality_score, generate_recommendations
 
 
 class TestDuplicateManager:
@@ -142,6 +142,99 @@ class TestUnknownStepAction:
     def test_completely_unknown_combo_raises(self, messy_df):
         with pytest.raises(ValueError, match="Unknown step/action combination"):
             apply_action(messy_df, "not_a_real_step", "not_a_real_action", None, {})
+
+
+class TestMissingnessAwareRecommendations:
+    """generate_recommendations() previously suggested drop_column for ANY
+    column over 60% missing, regardless of why. These pin the fix: a
+    structurally-missing column (missing by design) should never get a
+    blanket drop_column suggestion, even at 90%+ missing."""
+
+    @pytest.fixture
+    def structural_high_missing_df(self):
+        # 'dismissal_type' is 90%+ missing, but ONLY because it's populated
+        # exclusively on wicket rows (10% of rows) — missing by design.
+        rng = np.random.RandomState(0)
+        n = 200
+        event = rng.choice(["wicket", "no_wicket"], size=n, p=[0.1, 0.9])
+        dismissal = [rng.choice(["bowled", "caught"]) if e == "wicket" else np.nan for e in event]
+        return pd.DataFrame({"event": event, "dismissal_type": dismissal, "runs": rng.randint(0, 7, n)})
+
+    def test_structural_missingness_not_recommended_for_drop(self, structural_high_missing_df):
+        recs = generate_recommendations(structural_high_missing_df)
+        dismissal_recs = [r for r in recs if r.column == "dismissal_type"]
+        assert len(dismissal_recs) == 1
+        assert dismissal_recs[0].recommended_action != "drop_column"
+        assert dismissal_recs[0].recommended_action == "ignore"
+
+    def test_structural_missingness_reason_cites_evidence(self, structural_high_missing_df):
+        recs = generate_recommendations(structural_high_missing_df)
+        rec = next(r for r in recs if r.column == "dismissal_type")
+        assert "event" in rec.reason
+        assert "structural" in rec.reason.lower()
+
+    def test_drop_column_still_still_offered_as_alternative(self, structural_high_missing_df):
+        # The app never blocks a choice outright — drop_column should still
+        # be listed as an alternative for a user who disagrees with the read.
+        recs = generate_recommendations(structural_high_missing_df)
+        rec = next(r for r in recs if r.column == "dismissal_type")
+        assert "drop_column" in rec.alternative_actions
+
+    def test_ignore_action_is_a_real_no_op(self, structural_high_missing_df):
+        out, preview = apply_action(structural_high_missing_df, "missing_value_center", "ignore",
+                                     "dismissal_type", {})
+        assert out["dismissal_type"].isna().sum() == structural_high_missing_df["dismissal_type"].isna().sum()
+        assert preview["missing_before"] == preview["missing_after"]
+
+    def test_ordinary_high_missing_column_still_gets_drop_column(self, messy_df):
+        # Unrelated regression check: a column with no structural pattern and
+        # high missingness should still hit the original >60% drop_column path.
+        df = messy_df.copy()
+        df["mostly_gone"] = pd.Series([np.nan] * len(df), dtype=object)
+        df.loc[df.index[:5], "mostly_gone"] = "x"  # 90% missing, no predictor
+        recs = generate_recommendations(df)
+        rec = next(r for r in recs if r.column == "mostly_gone")
+        assert rec.recommended_action == "drop_column"
+
+
+class TestTieredOutlierRecommendations:
+    """generate_recommendations() previously gave every outlier the exact same
+    flat 'flag_for_review' with no distinction between a probable typo and a
+    genuine rare value. These pin the tiering integration."""
+
+    @pytest.fixture
+    def tiered_price_df(self):
+        rng = np.random.RandomState(0)
+        n = 100
+        prices = rng.normal(50, 5, n).round(2)
+        prices[0] = 5000.0  # decimal-slip error
+        prices[1] = prices[2] = prices[3] = 200.0  # repeated legitimate rare value
+        return pd.DataFrame({"price": prices})
+
+    def test_issue_and_reason_mention_tier_breakdown(self, tiered_price_df):
+        recs = generate_recommendations(tiered_price_df)
+        rec = next(r for r in recs if r.column == "price" and r.step == "outlier_center")
+        assert "likely data-entry error" in rec.issue
+        assert "legitimate rare value" in rec.issue
+
+    def test_preview_includes_tier_counts_and_far_out_fence(self, tiered_price_df):
+        recs = generate_recommendations(tiered_price_df)
+        rec = next(r for r in recs if r.column == "price" and r.step == "outlier_center")
+        assert rec.preview["tier_counts"]["likely_data_entry_error"] == 1
+        assert rec.preview["tier_counts"]["legitimate_rare_value"] == 3
+        assert "far_out_lower" in rec.preview and "far_out_upper" in rec.preview
+
+    def test_confidence_reflects_presence_of_error_tier(self, tiered_price_df):
+        recs = generate_recommendations(tiered_price_df)
+        rec = next(r for r in recs if r.column == "price" and r.step == "outlier_center")
+        assert rec.confidence >= 0.8  # driven by the high-confidence error point
+
+    def test_action_still_flag_for_review_never_auto_modifies(self, tiered_price_df):
+        # Even a confident "likely error" classification still doesn't bypass
+        # the app's never-mutate-without-confirmation principle.
+        recs = generate_recommendations(tiered_price_df)
+        rec = next(r for r in recs if r.column == "price" and r.step == "outlier_center")
+        assert rec.recommended_action == "flag_for_review"
 
 
 class TestQualityScore:

@@ -75,10 +75,40 @@ class CleaningRecommendation(BaseModel):
     goal_relevant: bool = False       # True if this recommendation touches a goal-relevant column
 
 
+class ScoreBreakdownItem(BaseModel):
+    label: str
+    points: float
+    reason: str
+
+
+class AnalyticalRiskScore(BaseModel):
+    """0 = no risk signals found, 100 = severe. Packages warnings_engine's
+    output as a score instead of only a list."""
+    overall: float
+    breakdown: List[ScoreBreakdownItem] = []
+    warning_count: int = 0
+    critical_count: int = 0
+
+
+class ReadinessScore(BaseModel):
+    """0 = not structurally ready for the analyses this app offers, 100 =
+    fully ready. Independent of Data Quality — a small but spotless dataset
+    can still score low here if it's too small for clustering/PCA/trend
+    analysis to be meaningful."""
+    overall: float
+    breakdown: List[ScoreBreakdownItem] = []
+
+
 class QualityResponse(BaseModel):
     dataset_id: str
     score: QualityScore
     recommendations: List[CleaningRecommendation]
+    # Additive fields — the composite "three constructs" view (data quality /
+    # analytical risk / readiness). Optional so any existing consumer reading
+    # only `score` is unaffected; new consumers can read these directly off
+    # the same response instead of a second endpoint.
+    analytical_risk: Optional[AnalyticalRiskScore] = None
+    readiness: Optional[ReadinessScore] = None
 
 
 # ---------- Trust Warnings ----------
@@ -239,6 +269,13 @@ class FeatureRecommendation(BaseModel):
     risks: List[str] = []
     alternative_actions: List[str] = []
     goal_relevant: bool = False
+    # Value classification (additive): how worthwhile the suggested feature
+    # actually looks, distinct from confidence (confidence = "are we sure the
+    # detection rule fired correctly"; value_tier = "is the resulting feature
+    # actually likely to be useful"). One of: high_value, situational, risky,
+    # redundant. value_tier_reason states the concrete check behind it.
+    value_tier: str = "situational"
+    value_tier_reason: str = ""
 
 
 class FeatureEngineeringResponse(BaseModel):
@@ -438,6 +475,42 @@ class ExplainChartRequest(BaseModel):
     columns: List[str] = []
 
 
+# ---------- Interactive filtering / drill-down ----------
+# A filter is a view, never a dataset version — applying one never pushes to
+# session.log or session.versions. It's recomputed on the fly against
+# session.current every time, same "always live off the current version"
+# principle the Dashboard's pinned charts already follow.
+
+class FilterCondition(BaseModel):
+    column: str
+    op: str          # "eq" | "in" | "gte" | "lte" | "between"
+    value: Any        # scalar for eq/gte/lte, list for in/between
+
+
+class FilteredRowsRequest(BaseModel):
+    dataset_id: str
+    filters: List[FilterCondition] = []
+    page: int = 1
+    page_size: int = 25
+
+
+class FilteredRowsResponse(BaseModel):
+    dataset_id: str
+    total_rows: int          # rows in the dataset overall (unfiltered)
+    total_matching: int      # rows matching the filter
+    page: int
+    page_size: int
+    columns: List[str]
+    rows: List[Dict[str, Any]]
+
+
+class BuildChartRequest(BaseModel):
+    dataset_id: str
+    chart_type: str
+    columns: List[str] = []
+    filters: List[FilterCondition] = []
+
+
 class ExplainChartResponse(BaseModel):
     dataset_id: str
     explanation: str
@@ -494,3 +567,75 @@ class GenerateReportRequest(BaseModel):
     dataset_id: str
     format: str = "markdown"    # markdown / html / pdf / notebook
     included_analyses: List[ReportAnalysisInclude] = []
+    section_order: Optional[List[str]] = None   # session 13: which sections, and in what order — None = every section, default order
+
+
+# ---------- Smart Report Builder (session 13) ----------
+# AI curation in front of report_engine.py's renderers — decides WHICH
+# sections/analyses go in, never renders anything itself.
+
+class AvailableAnalysisSummary(BaseModel):
+    """One already-completed analysis the builder can choose to include —
+    the backend has no server-side memory of 'analyses run this session'
+    (that's frontend UI state), so the caller passes these in rather than
+    the engine fetching them via a tool."""
+    index: int
+    analysis_type: str
+    columns: List[str] = []
+    summary: str
+
+
+class DraftReportPlanRequest(BaseModel):
+    dataset_id: str
+    available_analyses: List[AvailableAnalysisSummary] = []
+    user_request: Optional[str] = None   # e.g. "focus this on regional performance"
+
+
+class ReportSectionPlan(BaseModel):
+    key: str
+    label: str
+    include: bool
+    reason: str
+
+
+class DraftReportPlanResponse(BaseModel):
+    rationale: str
+    sections: List[ReportSectionPlan]
+    selected_analysis_indices: List[int] = []
+    unverified_figures: List[Dict[str, Any]] = []
+    grounded: bool = True
+
+
+# ---------- Copilot (conversational layer, never mutates directly) ----------
+
+class CopilotChatMessage(BaseModel):
+    role: str            # "user" | "assistant"
+    content: str
+
+
+class CopilotMessageRequest(BaseModel):
+    dataset_id: str
+    message: str
+    history: List[CopilotChatMessage] = []
+
+
+class CopilotMessageResponse(BaseModel):
+    reply: str
+    proposed_action: Optional[Dict[str, Any]] = None
+    has_more_suggestions: bool = False
+    unverified_figures: List[Dict[str, Any]] = []
+    grounded: bool = True
+
+
+class CopilotConfirmActionRequest(BaseModel):
+    dataset_id: str
+    proposed_action: Dict[str, Any]
+
+
+class CopilotConfirmActionResponse(BaseModel):
+    dataset_id: str
+    version: int
+    rows: int
+    columns: int
+    result_summary: str
+    has_more_suggestions: bool = False

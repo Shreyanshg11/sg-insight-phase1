@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Report — employee_attrition.csv</title>
+<style>
+body { font-family: -apple-system, Segoe UI, Helvetica, Arial, sans-serif; max-width: 900px;
+       margin: 40px auto; padding: 0 20px; color: #1a1a1a; line-height: 1.5; }
+h1 { border-bottom: 3px solid #B8752E; padding-bottom: 8px; }
+h2 { margin-top: 40px; border-bottom: 1px solid #ddd; padding-bottom: 6px; color: #2a2a2a; }
+h3 { margin-top: 24px; color: #444; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
+th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; }
+th { background: #f5f2ee; }
+.meta { color: #777; font-size: 13px; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+.badge-green { background: #e3f2e9; color: #2f7a4f; }
+.badge-amber { background: #fbeedd; color: #a15a1a; }
+.badge-red { background: #fbe6e4; color: #a13a2f; }
+.bar-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; font-size: 13px; }
+.bar-label { width: 140px; flex-shrink: 0; color: #555; }
+.bar-track { flex: 1; background: #f0ede8; border-radius: 3px; height: 14px; overflow: hidden; }
+.bar-fill { background: #B8752E; height: 100%; }
+.bar-count { width: 50px; text-align: right; color: #444; }
+.warning-box { border: 1px solid #d9695f; background: #fbe6e4; border-radius: 6px; padding: 10px 14px; margin: 10px 0; }
+.limitations li { color: #555; }
+</style></head><body>
+
+<h1>Data Analysis Report — employee_attrition.csv</h1>
+<p class="meta">Generated 2026-08-06T19:11:52.438514+00:00 · Dataset version 2
+ · Investigation goal: understand what's associated with employee attrition</p>
+
+<h2>Executive Summary</h2>
+<p>This report covers 'employee_attrition.csv' investigating "understand what's associated with employee attrition". The dataset currently has 400 rows and 9 columns, with an overall data quality score of 98.0/100. Since upload, 1 cleaning/feature-engineering action(s) were applied, taking it from 402 rows × 9 columns to 400 rows × 9 columns (version 2). 0 analysis result(s) and 0 visualization(s) are included below.</p>
+
+<h2>Dataset Overview</h2>
+<p>Rows: 400 &nbsp; Columns: 9 &nbsp; Memory: 122.4 KB &nbsp;
+Duplicate rows: 0 (0.0%)</p>
+<table><thead><tr><th>Column</th><th>Type</th><th>Role</th><th>Missing %</th><th>Unique</th><th>Goal-relevant</th></tr></thead><tbody><tr><td>employee_id</td><td>str</td><td>id</td><td>0.0</td><td>400</td><td>yes</td></tr><tr><td>department</td><td>str</td><td>categorical</td><td>0.0</td><td>7</td><td></td></tr><tr><td>job_role</td><td>str</td><td>target_candidate</td><td>0.0</td><td>4</td><td></td></tr><tr><td>age</td><td>int64</td><td>numeric</td><td>0.0</td><td>40</td><td></td></tr><tr><td>years_at_company</td><td>int64</td><td>numeric</td><td>0.0</td><td>25</td><td></td></tr><tr><td>monthly_income</td><td>float64</td><td>numeric</td><td>0.0</td><td>392</td><td></td></tr><tr><td>satisfaction_score</td><td>float64</td><td>target_candidate</td><td>5.0</td><td>5</td><td></td></tr><tr><td>overtime</td><td>str</td><td>target_candidate</td><td>0.0</td><td>2</td><td></td></tr><tr><td>attrition</td><td>str</td><td>target_candidate</td><td>0.0</td><td>2</td><td>yes</td></tr></tbody></table>
+
+<h2>Data Quality Report</h2>
+<p>Overall score: <span class="badge badge-green">98.0/100</span> &nbsp; completeness 99.4 · consistency 94.3 · validity 99.8 · uniqueness 100.0</p>
+
+<table><thead><tr><th>Health Category</th><th>Status</th><th>Summary</th></tr></thead><tbody><tr><td>Missing Values</td><td>good</td><td>1 column(s), 0.6% of all cells</td></tr><tr><td>Duplicate Status</td><td>good</td><td>No exact duplicate rows</td></tr><tr><td>Outliers</td><td>warning</td><td>6 value(s) across 1 column(s)</td></tr><tr><td>Data Type Issues</td><td>good</td><td>No type mismatches detected</td></tr><tr><td>Mixed Categories</td><td>warning</td><td>1 column(s) with casing/whitespace variants</td></tr><tr><td>Mixed Date Formats</td><td>good</td><td>No mixed date formats detected</td></tr><tr><td>Currency Issues</td><td>good</td><td>No currency inconsistencies detected</td></tr><tr><td>Unit Issues</td><td>good</td><td>No mixed units detected</td></tr></tbody></table>
+
+<h2>Cleaning &amp; Feature Engineering Log (1 action(s) applied)</h2>
+<h3>Cleaning</h3>
+<table><thead><tr><th>Version</th><th>Step</th><th>Action</th><th>Column</th><th>Reason</th></tr></thead><tbody><tr><td>2</td><td>duplicate_manager</td><td>drop_duplicates</td><td></td><td>exact duplicate rows found</td></tr></tbody></table>
+<h3>Feature Engineering</h3>
+<p><em>(none)</em></p>
+
+<h2>EDA Findings</h2>
+<p>Numeric: age, years_at_company, monthly_income, satisfaction_score &nbsp;
+Categorical: employee_id, department, job_role, overtime, attrition &nbsp;
+Date: (none)</p>
+<h3>Strongest correlations</h3>
+<p><em>(none)</em></p>
+
+<h2>Deep Analysis</h2>
+<p><em>No analyses were included in this report.</em></p>
+
+<h2>Visualizations (0)</h2>
+
+
+<h2>Recommendations</h2>
+<h3>Outstanding cleaning suggestions</h3>
+<table><thead><tr><th>Issue</th><th>Suggested action</th><th>Confidence</th></tr></thead><tbody><tr><td>20 missing values (5.0%)</td><td>impute_mean</td><td>0.75</td></tr><tr><td>6 values outside IQR fences [989.07, 12146.63]</td><td>flag_for_review</td><td>0.52</td></tr><tr><td>2 category variant(s) collapse when case/whitespace is normalized</td><td>normalize_case_whitespace</td><td>0.85</td></tr></tbody></table>
+<h3>Outstanding feature engineering suggestions</h3>
+<table><thead><tr><th>Issue</th><th>Suggested action</th><th>Confidence</th></tr></thead><tbody><tr><td>'attrition' is categorical/text (2 distinct values) and has no numeric representation yet for methods that require numeric input.</td><td>one_hot_encode</td><td>0.86</td></tr><tr><td>'age' and 'years_at_company' are both numeric but their per-unit relationship ('age_per_years_at_company') isn't captured as its own column.</td><td>create_ratio</td><td>0.82</td></tr><tr><td>'age' and 'monthly_income' are both numeric but their per-unit relationship ('age_per_monthly_income') isn't captured as its own column.</td><td>create_ratio</td><td>0.85</td></tr><tr><td>'age' and 'satisfaction_score' are both numeric but their per-unit relationship ('age_per_satisfaction_score') isn't captured as its own column.</td><td>create_ratio</td><td>0.85</td></tr><tr><td>'years_at_company' and 'age' are both numeric but their per-unit relationship ('years_at_company_per_age') isn't captured as its own column.</td><td>create_ratio</td><td>0.85</td></tr><tr><td>'years_at_company' and 'monthly_income' are both numeric but their per-unit relationship ('years_at_company_per_monthly_income') isn't captured as its own column.</td><td>create_ratio</td><td>0.85</td></tr><tr><td>'years_at_company' and 'satisfaction_score' are both numeric but their per-unit relationship ('years_at_company_per_satisfaction_score') isn't captured as its own column.</td><td>create_ratio</td><td>0.85</td></tr><tr><td>'monthly_income' and 'age' are both numeric but their per-unit relationship ('monthly_income_per_age') isn't captured as its own column.</td><td>create_ratio</td><td>0.85</td></tr><tr><td>'monthly_income' and 'years_at_company' are both numeric but their per-unit relationship ('monthly_income_per_years_at_company') isn't captured as its own column.</td><td>create_ratio</td><td>0.82</td></tr><tr><td>'monthly_income' and 'satisfaction_score' are both numeric but their per-unit relationship ('monthly_income_per_satisfaction_score') isn't captured as its own column.</td><td>create_ratio</td><td>0.85</td></tr></tbody></table>
+<h3>Analyses not yet explored</h3>
+<table><thead><tr><th>Analysis</th><th>Why it's viable</th><th>Confidence</th></tr></thead><tbody><tr><td>Hypothesis Test: 'attrition' groups</td><td>'attrition' splits into 2 group(s) each with 5+ rows - enough to test whether 'age' differs meaningfully between them (pick a different outcome column at run time if needed).</td><td>0.7</td></tr><tr><td>Regression</td><td>4 usable numeric columns and 400 rows support fitting a linear regression - pick one column as the target at run time.</td><td>0.8</td></tr><tr><td>Clustering / Segmentation</td><td>4 usable numeric columns and 400 rows are enough to look for natural groupings without needing a labeled target.</td><td>0.65</td></tr><tr><td>Hypothesis Test: 'job_role' groups</td><td>'job_role' splits into 4 group(s) each with 5+ rows - enough to test whether 'age' differs meaningfully between them (pick a different outcome column at run time if needed).</td><td>0.7</td></tr><tr><td>Hypothesis Test: 'overtime' groups</td><td>'overtime' splits into 2 group(s) each with 5+ rows - enough to test whether 'age' differs meaningfully between them (pick a different outcome column at run time if needed).</td><td>0.7</td></tr><tr><td>Principal Component Analysis</td><td>4 usable numeric columns is enough dimensionality for PCA to meaningfully compress into fewer components.</td><td>0.65</td></tr><tr><td>Anomaly Detection</td><td>4 usable numeric columns and 400 rows support looking for rows that are jointly unusual across several columns at once - different from the single-column IQR check already in the Cleaning Center's Outlier Center.</td><td>0.65</td></tr></tbody></table>
+
+<h2>Limitations</h2>
+<ul class="limitations"><li>This report reflects a single point-in-time snapshot of the dataset at the version noted above; re-running it after further cleaning or new data will produce different numbers.</li><li>Statistical results (correlation, regression, hypothesis tests, etc.) describe association within this dataset only and do not by themselves establish causation.</li></ul>
+
+<h2>Appendix — Full Action Log (2 version(s) total)</h2>
+<table><thead><tr><th>Version</th><th>Step</th><th>Action</th><th>Column</th><th>Confidence</th><th>Timestamp</th></tr></thead><tbody><tr><td>2</td><td>duplicate_manager</td><td>drop_duplicates</td><td></td><td>0.9</td><td>2026-08-06T19:11:52.397982+00:00</td></tr></tbody></table>
+
+</body></html>

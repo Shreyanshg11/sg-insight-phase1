@@ -24,7 +24,7 @@ function Scatter({ points }) {
   );
 }
 
-export default function EDARelationships({ datasetId, allColumns, x, y, onSelectX, onSelectY }) {
+export default function EDARelationships({ datasetId, allColumns, x, y, onSelectX, onSelectY, filters }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -33,11 +33,11 @@ export default function EDARelationships({ datasetId, allColumns, x, y, onSelect
     if (!x || !y) return;
     setLoading(true);
     setError(null);
-    getEDARelationships(datasetId, x, y)
+    getEDARelationships(datasetId, x, y, filters)
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [datasetId, x, y]);
+  }, [datasetId, x, y, filters]);
 
   useEffect(() => { load(); }, [load]);
 
