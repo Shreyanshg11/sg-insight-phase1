@@ -22,6 +22,7 @@ since the chart was pinned.
 import uuid
 import numpy as np
 import pandas as pd
+from app.core.iqr import finite_values, iqr_bounds, outlier_mask
 from scipy import stats
 
 from app.engines.feature_engineering_engine import (
@@ -43,15 +44,11 @@ def _is_goal_relevant(columns: list[str], goal_keywords: list[str]) -> bool:
 
 
 def _iqr_outlier_indices(df: pd.DataFrame, col: str) -> list[int]:
-    series = df[col].dropna()
-    if len(series) < 8:
+    series = finite_values(df[col])
+    bounds = iqr_bounds(series)  # shared IQR policy
+    if bounds is None:
         return []
-    q1, q3 = series.quantile(0.25), series.quantile(0.75)
-    iqr = q3 - q1
-    if iqr == 0:
-        return []
-    lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
-    return series[(series < lower) | (series > upper)].index.tolist()
+    return series[outlier_mask(series, bounds)].index.tolist()
 
 
 # ---------------------------------------------------------------------------

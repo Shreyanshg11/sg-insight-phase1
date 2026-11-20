@@ -5,22 +5,30 @@ Design constraint from the spec: confidence scores must map to a real,
 explainable heuristic — never an arbitrary-looking number. Every
 recommendation below documents in `reason` exactly which heuristic produced it.
 """
+import re
 import uuid
-import difflib
 import pandas as pd
 import numpy as np
 from app.models.schemas import QualityScore, QualityBreakdownItem, CleaningRecommendation
 from app.core.dtype_utils import stringy_columns
 from app.engines.missingness_engine import classify_missingness
 from app.engines.outlier_engine import classify_outliers_for_column
+from app.core.iqr import FAR_OUT_MULTIPLIER, MIN_SAMPLE_SIZE, finite_values, iqr_bounds, outlier_mask
+from app.core.action_policy import is_review_only
+from app.core.recommendation_identity import assign_stable_ids
 
 # Fuzzy category merge (#7): a small built-in alias table for well-known
-# abbreviation cases called out explicitly in the brief (USA/US/United States),
-# plus generic difflib string-similarity for typos/spelling variants that
-# aren't in the table. Deliberately conservative — never auto-merges;
-# every fuzzy group is just another recommendation requiring confirmation.
-FUZZY_SIMILARITY_THRESHOLD = 0.72
+# abbreviation cases (USA/US/United States, UK, UAE) plus a deliberately
+# STRICT spelling-variant check for typos. Similar spelling is not evidence of
+# the same meaning (Australia/Austria, Male/Female), so the spelling tier only
+# accepts a single-character edit on real words, and every fuzzy group is a
+# review-only suggestion that needs explicit user confirmation — never auto-merged.
+FUZZY_SIMILARITY_THRESHOLD = 0.72  # DEPRECATED: no longer used for matching; kept so existing imports don't break
 FUZZY_MAX_DISTINCT_VALUES = 150  # skip high-cardinality columns; not really "categories"
+FUZZY_MIN_VALUE_LENGTH = 5       # shorter values are never fuzzy-matched (Gray/Grey, Jon/John, US/UK)
+FUZZY_MAX_VALUE_LENGTH = 64      # longer values are free text, not categories (also bounds edit-distance cost)
+FUZZY_MAX_EDIT_DISTANCE = 1      # Damerau-Levenshtein distance allowed between two spelling variants
+FUZZY_MIN_DIFFERING_TOKEN_LENGTH = 4  # a word that differs must be a real word, not a 1-3 char label ("Box"/"Fox", "A"/"B")
 
 _ALIAS_GROUPS = [
     {"usa", "us", "u.s.", "u.s.a.", "united states", "united states of america", "america"},
@@ -62,16 +70,14 @@ def compute_quality_score(df: pd.DataFrame) -> QualityScore:
     # Validity: fraction of numeric columns without extreme outliers (proxy via IQR)
     validity_scores = []
     for col in df.select_dtypes(include=[np.number]).columns:
-        series = df[col].dropna()
-        if len(series) < 5:
+        series = finite_values(df[col])
+        if len(series) < MIN_SAMPLE_SIZE:
             continue
-        q1, q3 = series.quantile(0.25), series.quantile(0.75)
-        iqr = q3 - q1
-        if iqr == 0:
+        bounds = iqr_bounds(series, FAR_OUT_MULTIPLIER)  # shared policy; 3.0x = "extreme value" proxy
+        if bounds is None:
             validity_scores.append(1.0)
             continue
-        lower, upper = q1 - 3 * iqr, q3 + 3 * iqr
-        outlier_ratio = ((series < lower) | (series > upper)).mean()
+        outlier_ratio = outlier_mask(series, bounds).mean()
         validity_scores.append(1 - outlier_ratio)
     validity = float(np.mean(validity_scores)) if validity_scores else 1.0
 
@@ -105,7 +111,8 @@ def compute_quality_score(df: pd.DataFrame) -> QualityScore:
         ),
         QualityBreakdownItem(
             label="Formatting Issues", points_deducted=formatting_deduction,
-            reason=f"Numeric columns average {round(validity_shortfall, 1)}% IQR-outlier rate; "
+            reason=f"Numeric columns average {round(validity_shortfall, 1)}% extreme-value (3×IQR) rate. This is a "
+                   "statistical proxy for validity, not a count of formatting errors; "
                    f"deduction = min(20, shortfall% × 0.3) = {formatting_deduction}."
         ),
         QualityBreakdownItem(
@@ -136,62 +143,165 @@ def compute_quality_score(df: pd.DataFrame) -> QualityScore:
 # Fuzzy category grouping (#7)
 # ---------------------------------------------------------------------------
 
+_ALIAS_INDEX = {entry: idx for idx, group in enumerate(_ALIAS_GROUPS) for entry in group}
+_TOKEN_RE = re.compile(r"[^\W_]+")
+_DIGIT_RUN_RE = re.compile(r"\d+")
+
+
 def _alias_match(a: str, b: str) -> bool:
     return any(a in group and b in group for group in _ALIAS_GROUPS)
 
 
-def find_fuzzy_category_groups(values: list[str]) -> list[dict]:
-    """Groups distinct category values likely to be the same real-world
-    category spelled differently — via the alias table (similarity 1.0) or
-    generic difflib.SequenceMatcher ratio for everything else. Returns groups
-    of size >= 2 only. Skips columns with more distinct values than
-    FUZZY_MAX_DISTINCT_VALUES to avoid an O(n^2) blowup on high-cardinality
-    (i.e. not really categorical) columns."""
-    if len(values) < 2 or len(values) > FUZZY_MAX_DISTINCT_VALUES:
+def _fuzzy_key(value) -> str:
+    """The single definition of "the same value" for fuzzy matching and for
+    fuzzy_merge execution: strip + collapse inner whitespace + casefold.
+    Returns "" for None/NaN/blank so callers can skip them."""
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass  # list-likes etc. — fall through to str()
+    return " ".join(str(value).split()).casefold()
+
+
+def _damerau_levenshtein(a: str, b: str) -> int:
+    """Edit distance counting insertion, deletion, substitution and adjacent
+    transposition as one edit each (optimal-string-alignment form; identical to
+    full Damerau-Levenshtein for the distance <= 1 checks made here)."""
+    la, lb = len(a), len(b)
+    d = [[0] * (lb + 1) for _ in range(la + 1)]
+    for i in range(la + 1):
+        d[i][0] = i
+    for j in range(lb + 1):
+        d[0][j] = j
+    for i in range(1, la + 1):
+        for j in range(1, lb + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            d[i][j] = min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost)
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                d[i][j] = min(d[i][j], d[i - 2][j - 2] + 1)
+    return d[la][lb]
+
+
+def _is_spelling_variant(a: str, b: str) -> bool:
+    """True only when two *normalized keys* (see _fuzzy_key) look like one
+    value mistyped. Deliberately strict — every rule below exists because
+    string similarity alone merges different categories (Australia/Austria,
+    Male/Female, Region 1/Region 2, Product A/Product B)."""
+    if a == b:
+        return False
+    if min(len(a), len(b)) < FUZZY_MIN_VALUE_LENGTH or max(len(a), len(b)) > FUZZY_MAX_VALUE_LENGTH:
+        return False
+    if abs(len(a) - len(b)) > FUZZY_MAX_EDIT_DISTANCE:
+        return False
+    tokens_a, tokens_b = _TOKEN_RE.findall(a), _TOKEN_RE.findall(b)
+    if not tokens_a or len(tokens_a) != len(tokens_b):
+        return False
+    # Never match digit differences (Region 1 vs Region 2, Tier 1 vs Tier 2, Plan A1 vs A2).
+    if _DIGIT_RUN_RE.findall(a) != _DIGIT_RUN_RE.findall(b):
+        return False
+    if _damerau_levenshtein(a, b) > FUZZY_MAX_EDIT_DISTANCE:
+        return False
+    # A differing word must be a real word, not a short label or a different short word.
+    for ta, tb in zip(tokens_a, tokens_b):
+        if ta != tb and min(len(ta), len(tb)) < FUZZY_MIN_DIFFERING_TOKEN_LENGTH:
+            return False
+    return True
+
+
+def find_fuzzy_category_groups(values: list[str], counts: dict | None = None) -> list[dict]:
+    """Groups distinct category values that MAY be the same category written
+    differently. These are review-only suggestions — similar spelling does not
+    prove identical meaning, and nothing here is ever applied automatically.
+
+    Two tiers (every group carries ``match_type``):
+    - ``alias``: values that belong to the same built-in alias group
+      (USA/US/United States...). similarity is 1.0.
+    - ``spelling_variant``: a strict typo check (see _is_spelling_variant).
+      Groups are built as cliques — a value joins only if it qualifies against
+      EVERY existing member, so there is no transitive chaining (A~B, B~C does
+      not put A and C together). ``similarity`` is the weakest pair in the group.
+
+    ``counts`` (optional, keyed by the strings in ``values``) is used to pick
+    the suggested canonical for spelling variants: the most frequent spelling.
+    Without counts the choice is deterministic (alphabetical) but not
+    frequency-based. None/NaN/blank values are ignored; duplicates and
+    case/whitespace-only variants collapse into one value. Columns with more
+    than FUZZY_MAX_DISTINCT_VALUES distinct values return [].
+    Output does not depend on the order of ``values``."""
+    counts = counts or {}
+
+    # 1. Normalize + dedupe. key -> {spelling: count}
+    spellings: dict[str, dict[str, int]] = {}
+    for raw in values or []:
+        key = _fuzzy_key(raw)
+        if not key:
+            continue
+        spelling = str(raw).strip()
+        count = counts.get(raw, counts.get(spelling, 0))
+        spellings.setdefault(key, {}).setdefault(spelling, count if isinstance(count, (int, float)) else 0)
+
+    if len(spellings) < 2 or len(spellings) > FUZZY_MAX_DISTINCT_VALUES:
         return []
 
-    parent = list(range(len(values)))
+    total = {k: sum(v.values()) for k, v in spellings.items()}
+    rep = {k: min(v, key=lambda sp: (-v[sp], sp)) for k, v in spellings.items()}  # most frequent raw spelling
+    order = sorted(spellings, key=lambda k: (-total[k], k))  # deterministic, input-order independent
 
-    def find(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
+    results: list[dict] = []
 
-    def union(i, j):
-        ri, rj = find(i), find(j)
-        if ri != rj:
-            parent[ri] = rj
-
-    lowered = [v.lower().strip() for v in values]
-    pair_scores: dict[tuple[int, int], float] = {}
-
-    for i in range(len(values)):
-        for j in range(i + 1, len(values)):
-            if _alias_match(lowered[i], lowered[j]):
-                union(i, j)
-                pair_scores[(i, j)] = 1.0
-                continue
-            ratio = difflib.SequenceMatcher(None, lowered[i], lowered[j]).ratio()
-            if ratio >= FUZZY_SIMILARITY_THRESHOLD:
-                union(i, j)
-                pair_scores[(i, j)] = ratio
-
-    groups_by_root: dict[int, list[int]] = {}
-    for idx in range(len(values)):
-        groups_by_root.setdefault(find(idx), []).append(idx)
-
-    results = []
-    for idxs in groups_by_root.values():
-        if len(idxs) < 2:
+    # 2. Alias tier (existing verified groups, unchanged semantics).
+    alias_members: dict[int, list[str]] = {}
+    for key in order:
+        idx = _ALIAS_INDEX.get(key)
+        if idx is not None:
+            alias_members.setdefault(idx, []).append(key)
+    consumed: set[str] = set()
+    for idx in sorted(alias_members):
+        keys = alias_members[idx]
+        if len(keys) < 2:
             continue
-        group_values = [values[i] for i in idxs]
-        # Longest spelling as the default canonical suggestion — simple and
-        # explainable; the user can always override via Rename before merging.
-        canonical = max(group_values, key=len)
-        relevant_scores = [s for (i, j), s in pair_scores.items() if i in idxs and j in idxs]
-        avg_similarity = round(sum(relevant_scores) / len(relevant_scores), 2) if relevant_scores else FUZZY_SIMILARITY_THRESHOLD
-        results.append({"values": group_values, "suggested_canonical": canonical, "similarity": avg_similarity})
+        consumed.update(keys)
+        group_values = [rep[k] for k in keys]
+        results.append({
+            "values": group_values,
+            # Alias groups keep the long-standing "fullest spelling" suggestion.
+            "suggested_canonical": max(group_values, key=len),
+            "similarity": 1.0,
+            "match_type": "alias",
+            "review_required": True,
+        })
+
+    # 3. Spelling-variant tier: greedy clique partition, no transitive chaining.
+    pool = [k for k in order if k not in consumed]
+    assigned: set[str] = set()
+    for anchor in pool:
+        if anchor in assigned:
+            continue
+        members = [anchor]
+        for cand in pool:
+            if cand == anchor or cand in assigned:
+                continue
+            if all(_is_spelling_variant(m, cand) for m in members):
+                members.append(cand)
+        if len(members) < 2:
+            continue
+        assigned.update(members)
+        weakest = min(
+            1 - FUZZY_MAX_EDIT_DISTANCE / max(len(x), len(y))
+            for i, x in enumerate(members) for y in members[i + 1:]
+        )
+        group_values = [rep[k] for k in members]
+        results.append({
+            "values": group_values,
+            "suggested_canonical": group_values[0],  # members are ordered most-frequent first
+            "similarity": round(weakest, 2),
+            "match_type": "spelling_variant",
+            "review_required": True,
+            "max_edit_distance": FUZZY_MAX_EDIT_DISTANCE,
+        })
 
     return results
 
@@ -390,51 +500,51 @@ def generate_recommendations(df: pd.DataFrame, goal_keywords: list[str] | None =
         summary = classify_outliers_for_column(df, col)
         if summary is None:
             continue
-        outlier_pct = summary.total_outliers / len(df[col].dropna())
+        outlier_pct = summary.total_outliers / max(summary.n_values, 1)
         counts = summary.tier_counts
-        tier_summary = (f"{counts['likely_data_entry_error']} likely data-entry error(s), "
-                         f"{counts['legitimate_rare_value']} legitimate rare value(s), "
-                         f"{counts['statistically_unusual']} statistically unusual but unclassified")
+        tier_summary = (f"{counts['likely_data_entry_error']} potential data-quality issue(s), "
+                         f"{counts['legitimate_rare_value']} recurring value(s), "
+                         f"{counts['statistically_unusual']} unclassified statistical outlier(s)")
 
-        # Column-level confidence: the highest per-point confidence among the
-        # points actually flagged as errors (if any) wins, since that's the
-        # single most actionable signal in the set; otherwise fall back to the
-        # average confidence across whatever was found. Keeps a single number
-        # for the recommendation card while the full per-point breakdown is
-        # still available in `preview` for anyone who wants to drill in.
-        error_points = [p for p in summary.points if p.tier == "likely_data_entry_error"]
-        if error_points:
-            confidence = max(p.confidence for p in error_points)
-        else:
-            confidence = round(float(np.mean([p.confidence for p in summary.points])), 2) if summary.points else 0.5
+        # Column-level confidence is the MEAN evidence strength over ALL flagged points
+        # (see outlier_engine). It used to be the maximum error-point confidence, which let
+        # one coincidental point set the headline number for the whole column.
+        confidence = summary.column_confidence
 
         recs.append(CleaningRecommendation(
             id=str(uuid.uuid4()),
             step="outlier_center",
             column=col,
-            issue=f"{summary.total_outliers} values outside IQR fences [{summary.lower_fence}, {summary.upper_fence}] "
-                  f"— {tier_summary}",
+            issue=f"{summary.total_outliers} statistical outlier(s) outside IQR fences [{summary.lower_fence}, "
+                  f"{summary.upper_fence}] — {tier_summary}",
             recommended_action="flag_for_review",
-            reason=f"Standard 1.5×IQR rule: Q1={summary.q1}, Q3={summary.q3}, IQR={summary.iqr}. Each flagged "
-                   "value was further checked against a stricter 3.0×IQR 'far-out' fence, a decimal-point/"
-                   "unit-slip magnitude pattern (~10x or ~100x the median), and whether it repeats elsewhere in "
-                   f"the column — {tier_summary}. Flagged for review rather than auto-modified — outlier "
-                   "handling is context-dependent even for the 'likely error' tier.",
+            reason=f"Column '{col}': values outside the Tukey 1.5×IQR fences (Q1={summary.q1}, Q3={summary.q3}, "
+                   f"IQR={summary.iqr}, n={summary.n_values}) are statistically unusual, not automatically wrong. "
+                   "Each was additionally checked for concrete patterns: a far-out (3.0×IQR) position, an isolated "
+                   "~10×/~100× decimal-slip magnitude that a long-tailed distribution does not explain, a "
+                   f"plausible sign flip, and whether the exact value repeats — {tier_summary}. "
+                   + " ".join(summary.limitations) +
+                   " Flagged for review only; nothing is changed unless you choose an action and confirm.",
             confidence=confidence,
             preview={"outlier_count": summary.total_outliers, "lower_fence": summary.lower_fence,
                      "upper_fence": summary.upper_fence, "far_out_lower": summary.far_out_lower,
                      "far_out_upper": summary.far_out_upper, "tier_counts": counts,
+                     "n_values": summary.n_values, "skewness": summary.skewness, "long_tailed": summary.long_tailed,
+                     "method": summary.method, "limitations": summary.limitations,
+                     "column_confidence": summary.column_confidence, "review_required": True,
                      "sample_outliers": [p.model_dump() for p in summary.points[:5]],
                      "rows_affected": summary.total_outliers,
-                     "estimated_impact": f"{round(outlier_pct*100,1)}% of non-null values in '{col}' fall "
+                     "estimated_impact": f"{round(outlier_pct*100,1)}% of finite values in '{col}' fall "
                                          "outside the fence. No change is applied until you pick ignore/"
-                                         "convert-to-missing/clip/drop below."},
-            how_detected=f"1.5×IQR fence: values outside [{summary.lower_fence}, {summary.upper_fence}] "
-                         f"(Q1={summary.q1}, Q3={summary.q3}, IQR={summary.iqr}), each point additionally "
-                         "tiered by far-out distance, magnitude pattern, and repetition (see outlier_engine).",
+                                         "convert-to-missing/clip/drop below — and those act on ALL statistical "
+                                         "outliers, not only the potential data-quality issues."},
+            how_detected=f"Tukey 1.5×IQR fence on finite numeric values: outside [{summary.lower_fence}, {summary.upper_fence}] "
+                         f"(Q1={summary.q1}, Q3={summary.q3}, IQR={summary.iqr}); each point is then labelled by "
+                         "evidence (far-out distance, isolated magnitude pattern, sign pattern, repetition). "
+                         "Labels are hypotheses; confidence is an evidence score, not a probability.",
             risks=["A legitimate extreme value (not an error) could be clipped or dropped if you act on "
-                   "this without checking context — this applies even to values tiered as 'likely error', "
-                   "since the tiering is still a heuristic, not a certainty."],
+                   "this without checking context. This applies even to values labelled as potential data-quality "
+                   "issues: the labels are heuristics, and the engine assumes no business rules or valid ranges."],
             alternative_actions=["ignore", "convert_to_missing", "clip", "drop_rows"],
             goal_relevant=_is_goal_relevant(col),
         ))
@@ -474,35 +584,54 @@ def generate_recommendations(df: pd.DataFrame, goal_keywords: list[str] | None =
                 goal_relevant=_is_goal_relevant(col),
             ))
 
-        # Fuzzy category merge (#7): run on one representative original-cased
-        # value per normalized group, so pure case/whitespace variants (already
-        # handled above) don't get double-flagged here.
-        representative = raw.groupby(normalized_key).first()
-        distinct_values = representative.tolist()
-        fuzzy_groups = find_fuzzy_category_groups(distinct_values)
+        # Fuzzy category merge (#7): strict, review-only suggestions. Case/whitespace
+        # variants are already handled by the normalize recommendation above, so
+        # find_fuzzy_category_groups() collapses them to one value per normalized
+        # key and uses row counts to suggest the most frequent spelling.
+        stripped = raw.str.strip()
+        fuzzy_keys = stripped.map(_fuzzy_key)
+        spelling_counts = stripped[fuzzy_keys != ""].value_counts()
+        fuzzy_groups = find_fuzzy_category_groups(
+            spelling_counts.index.tolist(), counts=spelling_counts.to_dict()
+        )
         for group in fuzzy_groups:
             group_values = group["values"]
             similarity = group["similarity"]
-            rows_affected = int(raw.str.strip().isin(group_values).sum())
-            is_alias_match = similarity == 1.0
+            is_alias_match = group["match_type"] == "alias"
+            member_keys = {_fuzzy_key(v) for v in group_values}
+            rows_affected = int(fuzzy_keys.isin(member_keys).sum())
             recs.append(CleaningRecommendation(
                 id=str(uuid.uuid4()),
                 step="category_merge_center",
                 column=col,
-                issue=f"{len(group_values)} values may refer to the same category: {group_values}",
+                issue=(f"{len(group_values)} values match a known alias group: {group_values}"
+                       if is_alias_match else
+                       f"{len(group_values)} values differ by only one character and may be "
+                       f"spelling variants: {group_values}"),
                 recommended_action="fuzzy_merge",
-                reason=(f"These values matched a known alias group (e.g. country/region abbreviations)."
+                reason=("These values match a built-in alias group (e.g. country abbreviations such as "
+                        "USA / US / United States). This is a lookup against a fixed list, not a judgement "
+                        "about your data — confirm they mean the same thing in this column. "
                         if is_alias_match else
-                        f"These values are {int(similarity*100)}% similar by string comparison — likely "
-                        "the same category spelled differently.") +
-                       " Fuzzy matches are suggestions only; review before merging.",
-                confidence=round(min(0.75, similarity * 0.8), 2),  # capped below exact-merge's 0.85 — fuzzy is inherently less certain
+                        "These values differ by a single character edit (case and whitespace ignored). "
+                        "Similar spelling does not prove the same meaning — different real-world categories "
+                        "can be spelled almost identically. The suggested canonical is the most frequent "
+                        "spelling in this column. ") +
+                       "Review-only suggestion: nothing is merged unless you confirm.",
+                # Capped below exact-merge's 0.85; spelling matches are capped lower still because
+                # similar spelling is weaker evidence than a known alias.
+                confidence=(round(min(0.75, similarity * 0.8), 2) if is_alias_match
+                            else round(min(0.6, similarity * 0.65), 2)),
                 preview={"values": group_values, "suggested_canonical": group["suggested_canonical"],
                          "similarity": similarity, "rows_affected": rows_affected,
+                         "match_type": group["match_type"], "review_required": True,
                          "estimated_impact": f"Merging would affect {rows_affected} row(s) across "
                                              f"{len(group_values)} distinct value(s)."},
-                how_detected="Alias table match (known abbreviations)" if is_alias_match else
-                             f"difflib.SequenceMatcher ratio ≥ {FUZZY_SIMILARITY_THRESHOLD} between normalized values.",
+                how_detected=("Alias table match (known abbreviations)." if is_alias_match else
+                              "Case/whitespace-insensitive comparison: at most 1 character edit "
+                              "(insertion, deletion, substitution or adjacent swap), both values at least "
+                              f"{FUZZY_MIN_VALUE_LENGTH} characters, same word count, no digit differences, "
+                              "and every pair in the group qualifies independently (no chaining)."),
                 risks=["Fuzzy matches can be wrong for values that are similar-looking but genuinely "
                        "different (e.g. a US state name vs. a same-named country) — always confirm the "
                        "grouping before merging."],
@@ -516,7 +645,28 @@ def generate_recommendations(df: pd.DataFrame, goal_keywords: list[str] | None =
     # actually cares about aren't buried under generic findings.
     recs.sort(key=lambda r: not r.goal_relevant)
 
+    assign_stable_ids(recs)
+    for rec in recs:
+        rec.review_only = is_review_only(rec.recommended_action)
+        rec.executable = is_executable_recommendation(rec.step, rec.recommended_action)
+
     return recs
+
+
+# Recommended actions that apply_action() can execute for the card's Apply/Merge button.
+# Kept next to the generators so adding a recommendation type forces a decision here;
+# tests/test_recommendation_lifecycle.py executes every generated recommendation to
+# prove this table matches apply_action's real behaviour.
+EXECUTABLE_RECOMMENDED_ACTIONS = {
+    "duplicate_manager": {"drop_duplicates"},
+    "missing_value_center": {"ignore", "drop_column", "drop_rows", "impute_mean", "impute_median", "impute_mode"},
+    "outlier_center": set(),  # outlier recommendations are review-only (flag_for_review); explicit actions are never "recommended"
+    "category_merge_center": {"normalize_case_whitespace", "fuzzy_merge"},
+}
+
+
+def is_executable_recommendation(step: str, action: str) -> bool:
+    return not is_review_only(action) and action in EXECUTABLE_RECOMMENDED_ACTIONS.get(step, set())
 
 
 # ---------------------------------------------------------------------------
@@ -561,17 +711,22 @@ def apply_action(df: pd.DataFrame, step: str, action: str, column: str | None, p
         if column is None:
             raise ValueError("column is required for outlier_center actions")
         series = out[column]
-        q1, q3 = series.quantile(0.25), series.quantile(0.75)
-        iqr = q3 - q1
-        lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
-        mask = (series < lower) | (series > upper)
+        if not pd.api.types.is_numeric_dtype(series) or pd.api.types.is_bool_dtype(series):
+            raise ValueError(f"outlier_center requires a numeric column; '{column}' is not numeric")
+        bounds = iqr_bounds(series)  # shared policy: finite values only, >= MIN_SAMPLE_SIZE, non-zero IQR
+        if bounds is None and action != "ignore":
+            raise ValueError(f"IQR fences are not reliable for '{column}' (needs at least {MIN_SAMPLE_SIZE} "
+                             "finite numeric values and a non-zero IQR), so no outlier action was applied")
+        mask = outlier_mask(series, bounds)
         count_before = int(mask.sum())
         if action == "ignore":
             pass
         elif action == "convert_to_missing":
             out.loc[mask, column] = np.nan
         elif action == "clip":
-            out[column] = series.clip(lower=lower, upper=upper)
+            # clip only finite values; +/-inf stays as-is (non-finite is a data-quality matter, not an outlier)
+            out[column] = series.clip(lower=bounds.lower, upper=bounds.upper).where(
+                np.isfinite(series.astype(float)) | series.isna(), series)
         elif action == "drop_rows":
             out = out[~mask].reset_index(drop=True)
         else:
@@ -591,16 +746,54 @@ def apply_action(df: pd.DataFrame, step: str, action: str, column: str | None, p
             out[column] = out[column].apply(lambda v: lower_map.get(v.lower(), v) if isinstance(v, str) else v)
             preview = {"categories_before": before_unique, "categories_after": int(out[column].nunique(dropna=True))}
         elif action == "fuzzy_merge":
-            values_to_merge = params.get("values", [])
+            if column not in out.columns:
+                raise ValueError(f"Column '{column}' not found")
+            values_to_merge = params.get("values")
             canonical = params.get("canonical")
-            if not values_to_merge or not canonical:
+            if not values_to_merge or canonical is None or canonical == "":
                 raise ValueError("fuzzy_merge requires 'values' and 'canonical' params")
-            before_unique = int(out[column].nunique(dropna=True))
-            mask = out[column].astype(str).str.strip().isin(values_to_merge)
+            if (not isinstance(values_to_merge, (list, tuple))
+                    or not all(isinstance(v, str) and _fuzzy_key(v) for v in values_to_merge)):
+                raise ValueError("fuzzy_merge 'values' must be a list of non-empty strings")
+            if not isinstance(canonical, str) or not canonical.strip():
+                raise ValueError("fuzzy_merge 'canonical' must be a non-empty string")
+            merge_keys: list[str] = []
+            for v in values_to_merge:
+                if _fuzzy_key(v) not in merge_keys:
+                    merge_keys.append(_fuzzy_key(v))
+            if len(merge_keys) < 2:
+                raise ValueError("fuzzy_merge needs at least two distinct values to merge "
+                                 "(case/whitespace-only differences are handled by normalize_case_whitespace)")
+            canonical = canonical.strip()
+
+            # strip + casefold on BOTH sides, so 'usa' / '  USA ' follow 'USA'.
+            present = out[column].notna()
+            cell_keys = out[column].astype(str).map(_fuzzy_key)
+            existing_keys = set(cell_keys[present])
+            missing_values = [v for v in values_to_merge if _fuzzy_key(v) not in existing_keys]
+            if missing_values:
+                raise ValueError(f"fuzzy_merge values not found in column '{column}': {missing_values}")
+
+            mask = present & cell_keys.isin(merge_keys)
             rows_affected = int(mask.sum())
-            out.loc[mask, column] = canonical
+            changed = mask & (out[column].astype(str) != canonical).fillna(False).astype(bool)
+            rows_changed = int(changed.sum())
+            if rows_changed == 0:
+                raise ValueError("fuzzy_merge would not change any rows")
+
+            canonical_key = _fuzzy_key(canonical)
+            collides = canonical_key in existing_keys and canonical_key not in merge_keys
+            before_unique = int(out[column].nunique(dropna=True))
+            try:
+                if isinstance(out[column].dtype, pd.CategoricalDtype) and canonical not in out[column].cat.categories:
+                    out[column] = out[column].cat.add_categories([canonical])
+                out.loc[mask, column] = canonical
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"fuzzy_merge could not write '{canonical}' to column '{column}': {exc}") from exc
             preview = {"categories_before": before_unique, "categories_after": int(out[column].nunique(dropna=True)),
-                       "rows_affected": rows_affected, "canonical": canonical}
+                       "rows_affected": rows_affected, "rows_changed": rows_changed, "canonical": canonical,
+                       "merged_values": list(values_to_merge),
+                       "canonical_collides_with_other_category": bool(collides)}
         elif action == "rename_category":
             old_value = params.get("old_value")
             new_value = params.get("new_value")

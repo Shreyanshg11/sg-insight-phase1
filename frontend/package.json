@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
+    "test": "node --test \"src/**/*.test.js\"",
+    "test:e2e": "bash e2e/run-e2e.sh",
     "preview": "vite preview"
   },
   "dependencies": {

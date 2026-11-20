@@ -73,6 +73,12 @@ class CleaningRecommendation(BaseModel):
     risks: List[str] = []             # what could go wrong if this action is applied
     alternative_actions: List[str] = []  # other valid choices, so "apply" isn't the only path shown
     goal_relevant: bool = False       # True if this recommendation touches a goal-relevant column
+    # Additive lifecycle fields. `id` is now a stable identity (see core/recommendation_identity.py).
+    status: str = "open"              # "open" | "dismissed" (persisted server-side)
+    review_only: bool = False         # advice only (e.g. flag_for_review): never executable, no Apply
+    executable: bool = True           # False => the UI must not offer Apply for this recommended action
+    dismissed_at: Optional[str] = None
+    changed_since_dismissed: bool = False   # evidence moved since the user dismissed it (still dismissed)
 
 
 class ScoreBreakdownItem(BaseModel):
@@ -109,6 +115,7 @@ class QualityResponse(BaseModel):
     # the same response instead of a second endpoint.
     analytical_risk: Optional[AnalyticalRiskScore] = None
     readiness: Optional[ReadinessScore] = None
+    recommendation_counts: Optional[Dict[str, int]] = None   # {"open", "dismissed", "total"}
 
 
 # ---------- Trust Warnings ----------
@@ -446,6 +453,22 @@ class AIInsightResponse(BaseModel):
     grounded: bool                # True only if every number in the AI's text traces back to `result`
     model: str
 
+
+class DatasetIntelligenceResponse(BaseModel):
+    dataset_id: str
+    dataset_profile: Dict[str, Any]
+    findings: Dict[str, Any]
+    observation: str
+    evidence: str
+    business_meaning: str
+    possible_explanations: List[str]
+    limitations: List[str]
+    confidence: float
+    unverified_figures: List[UnverifiedFigure] = []
+    grounded: bool
+    model: str
+
+
 # ---------- Visualization + Dashboard Builder (#16 / #17) ----------
 
 class ChartRecommendation(BaseModel):
@@ -625,11 +648,18 @@ class CopilotMessageResponse(BaseModel):
     has_more_suggestions: bool = False
     unverified_figures: List[Dict[str, Any]] = []
     grounded: bool = True
+    # Additive: why an AI-suggested action was NOT offered as an executable proposal.
+    proposal_note: Optional[str] = None
 
 
 class CopilotConfirmActionRequest(BaseModel):
     dataset_id: str
-    proposed_action: Dict[str, Any]
+    # proposal_id (from the /message response) is the secure path: the server executes
+    # only its own stored action. proposed_action alone (legacy clients) is still
+    # accepted but is re-matched against current backend recommendations; its
+    # params/reason/confidence are never trusted.
+    proposal_id: Optional[str] = None
+    proposed_action: Optional[Dict[str, Any]] = None
 
 
 class CopilotConfirmActionResponse(BaseModel):
@@ -639,3 +669,16 @@ class CopilotConfirmActionResponse(BaseModel):
     columns: int
     result_summary: str
     has_more_suggestions: bool = False
+    proposal_id: Optional[str] = None
+    status: Optional[str] = None
+
+
+class CopilotDismissActionRequest(BaseModel):
+    dataset_id: str
+    proposal_id: str
+
+
+class CopilotDismissActionResponse(BaseModel):
+    dataset_id: str
+    proposal_id: str
+    status: str

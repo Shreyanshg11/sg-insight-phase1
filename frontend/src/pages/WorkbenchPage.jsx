@@ -1,8 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   getProfile, getQuality, applyAction, undoAction, getHistory, getWarnings, getHealth,
-  compareMethods, getVersions, compareVersions, restoreVersion,
+  compareMethods, getVersions, compareVersions, restoreVersion, dismissRecommendation, restoreRecommendation,
 } from "../api/client";
+import { canApply, emptyStateKind, recommendationCounts, setRecommendationStatus, splitByStatus } from "../lib/recommendationState";
+import DismissedRecommendations from "../components/DismissedRecommendations";
 import ProfileSummary from "../components/ProfileSummary";
 import QualityScorePanel from "../components/QualityScorePanel";
 import { AnalyticalRiskPanel, ReadinessPanel } from "../components/RiskReadinessPanels";
@@ -59,7 +61,11 @@ export default function WorkbenchPage({ dataset }) {
   const [warnings, setWarnings] = useState(null);
   const [health, setHealth] = useState(null);
   const [versions, setVersions] = useState(null);
-  const [dismissed, setDismissed] = useState(new Set());
+  // Dismissal is persisted server-side (recommendation status travels in `quality.recommendations`),
+  // so it survives refresh, navigation, reload and recomputation. Only UI toggles live here.
+  const [showDismissed, setShowDismissed] = useState(false);
+  const [recError, setRecError] = useState(null);
+  const [busyRecId, setBusyRecId] = useState(null);
   const [sortBy, setSortBy] = useState("goal");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -120,6 +126,10 @@ export default function WorkbenchPage({ dataset }) {
   }, []);
 
   const handleConfirm = async (rec, overrides = {}) => {
+    if (!overrides.action && !canApply(rec)) {
+      // Unsupported / review-only recommended actions never reach the backend from the UI.
+      throw new Error("This recommendation is review-only and cannot be applied.");
+    }
     await applyAction({
       dataset_id: dataset.dataset_id,
       step: rec.step,
@@ -133,6 +143,28 @@ export default function WorkbenchPage({ dataset }) {
   };
 
   const handleCompareMethods = (column) => compareMethods(dataset.dataset_id, column);
+
+  // Dismiss / restore only change a recommendation's persisted status; they never apply anything
+  // and never create a dataset version. Optimistic update with rollback on failure.
+  const changeRecStatus = async (rec, nextStatus, request) => {
+    setRecError(null);
+    setBusyRecId(rec.id);
+    setQuality((q) => setRecommendationStatus(q, rec.id, nextStatus));
+    try {
+      await request(dataset.dataset_id, rec.id);
+    } catch (e) {
+      setQuality((q) => setRecommendationStatus(q, rec.id, nextStatus === "dismissed" ? "open" : "dismissed"));
+      setRecError(e.message);
+      // The recommendation list is out of date (data changed in another tab, key no longer exists): reload it.
+      if (/not a current recommendation|changed since|No dismissed recommendation/i.test(e.message || "")) {
+        await refresh();
+      }
+    } finally {
+      setBusyRecId(null);
+    }
+  };
+  const handleDismissRec = (rec) => changeRecStatus(rec, "dismissed", dismissRecommendation);
+  const handleRestoreRec = (rec) => changeRecStatus(rec, "open", restoreRecommendation);
   const handleRestore = async (versionNumber) => { await restoreVersion(dataset.dataset_id, versionNumber); await refresh(); };
   const handleCompareVersions = (a, b) => compareVersions(dataset.dataset_id, a, b);
   const handleUndo = async () => { await undoAction(dataset.dataset_id); await refresh(); };
@@ -154,7 +186,9 @@ export default function WorkbenchPage({ dataset }) {
     );
   }
 
-  const activeRecs = sortRecs(quality?.recommendations.filter((r) => !dismissed.has(r.id)) ?? [], sortBy);
+  const { open: openRecs, dismissed: dismissedRecs } = splitByStatus(quality?.recommendations);
+  const activeRecs = sortRecs(openRecs, sortBy);
+  const emptyKind = emptyStateKind(recommendationCounts(quality?.recommendations));
   const goal = profile?.investigation_goal || dataset.investigation_goal;
 
   const renderStageContent = () => {
@@ -180,7 +214,7 @@ export default function WorkbenchPage({ dataset }) {
         <div>
           <div className="flex items-center justify-between">
             <p className="font-mono text-xs uppercase tracking-wider text-ink-500">
-              Cleaning recommendations ({activeRecs.length})
+              Cleaning recommendations ({activeRecs.length}{dismissedRecs.length > 0 ? ` open · ${dismissedRecs.length} dismissed` : ""})
               {goal && sortBy === "goal" && <span className="ml-2 text-ink-700">— goal-relevant items shown first</span>}
             </p>
             <select
@@ -191,20 +225,46 @@ export default function WorkbenchPage({ dataset }) {
               {SORT_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
             </select>
           </div>
+          {recError && <div className="mt-3"><ErrorState message={recError} compact /></div>}
           <div className="mt-3 space-y-3">
-            {activeRecs.length === 0 && (
-              <EmptyState message="No outstanding recommendations — dataset looks clean, or every action has been handled." />
+            {emptyKind === "none" && (
+              <EmptyState message="No recommendations available — the dataset looks clean." />
+            )}
+            {emptyKind === "all_dismissed" && (
+              <EmptyState
+                title="All recommendations dismissed"
+                message={`You dismissed all ${dismissedRecs.length} recommendation${dismissedRecs.length === 1 ? "" : "s"}. Nothing was applied and your data is unchanged — the underlying issues may still exist.`}
+                action={
+                  <button
+                    onClick={() => setShowDismissed(true)}
+                    className="rounded border border-graphite-border px-3 py-1.5 text-xs text-ink-300 hover:bg-graphite-700"
+                  >
+                    Show dismissed
+                  </button>
+                }
+              />
             )}
             {activeRecs.map((rec) => (
               <RecommendationCard
                 key={rec.id}
                 recommendation={rec}
                 onConfirm={handleConfirm}
-                onDismiss={(r) => setDismissed((prev) => new Set(prev).add(r.id))}
+                onDismiss={handleDismissRec}
                 onCompareMethods={handleCompareMethods}
               />
             ))}
           </div>
+          {dismissedRecs.length > 0 && (
+            <button
+              onClick={() => setShowDismissed((v) => !v)}
+              className="mt-3 rounded border border-graphite-border px-3 py-1.5 font-mono text-[11px] text-ink-300 hover:bg-graphite-700"
+            >
+              {showDismissed ? "Hide" : "Show"} dismissed ({dismissedRecs.length})
+            </button>
+          )}
+          {showDismissed && (
+            <DismissedRecommendations recommendations={dismissedRecs} onRestore={handleRestoreRec} busyId={busyRecId} />
+          )}
         </div>
       );
     }

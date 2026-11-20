@@ -214,8 +214,11 @@ class TestTieredOutlierRecommendations:
     def test_issue_and_reason_mention_tier_breakdown(self, tiered_price_df):
         recs = generate_recommendations(tiered_price_df)
         rec = next(r for r in recs if r.column == "price" and r.step == "outlier_center")
-        assert "likely data-entry error" in rec.issue
-        assert "legitimate rare value" in rec.issue
+        # Wording is evidence-based: a potential data-quality issue is a hypothesis, never "likely error".
+        assert "potential data-quality issue" in rec.issue
+        assert "recurring value" in rec.issue
+        assert "statistical outlier" in rec.issue
+        assert "likely data-entry error" not in (rec.issue + rec.reason).lower()
 
     def test_preview_includes_tier_counts_and_far_out_fence(self, tiered_price_df):
         recs = generate_recommendations(tiered_price_df)
@@ -227,7 +230,11 @@ class TestTieredOutlierRecommendations:
     def test_confidence_reflects_presence_of_error_tier(self, tiered_price_df):
         recs = generate_recommendations(tiered_price_df)
         rec = next(r for r in recs if r.column == "price" and r.step == "outlier_center")
-        assert rec.confidence >= 0.8  # driven by the high-confidence error point
+        # Column confidence is the MEAN evidence strength over all flagged points (not the max), capped at 0.70.
+        assert 0.4 < rec.confidence <= 0.70
+        assert rec.confidence == rec.preview["column_confidence"]
+        error_conf = max(p["confidence"] for p in rec.preview["sample_outliers"])
+        assert rec.confidence < error_conf  # one strong point must not set the whole column's confidence
 
     def test_action_still_flag_for_review_never_auto_modifies(self, tiered_price_df):
         # Even a confident "likely error" classification still doesn't bypass

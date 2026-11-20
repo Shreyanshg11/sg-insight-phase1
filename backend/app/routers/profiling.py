@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from app.core.session_store import store
+from app.core import recommendation_store
 from app.models.schemas import ProfileResponse, QualityResponse, WarningsResponse, TrustWarningResponse
 from app.engines.profiling_engine import profile_dataset
 from app.engines.cleaning_engine import compute_quality_score, generate_recommendations
@@ -28,11 +29,12 @@ async def get_quality(dataset_id: str):
     df = session.current
     score = compute_quality_score(df)
     recs = generate_recommendations(df, session.goal_keywords)
+    counts = recommendation_store.apply_status_overlay(dataset_id, recs)  # persisted dismissals; read-only
     profile = profile_dataset(dataset_id, df, session.investigation_goal, session.goal_keywords)
     analytical_risk = compute_analytical_risk(df, profile.target_candidates)
     readiness = compute_readiness(df, profile.target_candidates)
     return QualityResponse(dataset_id=dataset_id, score=score, recommendations=recs,
-                            analytical_risk=analytical_risk, readiness=readiness)
+                            analytical_risk=analytical_risk, readiness=readiness, recommendation_counts=counts)
 
 
 @router.get("/{dataset_id}/warnings", response_model=WarningsResponse)

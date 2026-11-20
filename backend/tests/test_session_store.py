@@ -126,3 +126,19 @@ class TestSessionStoreLookup:
     def test_get_known_id_returns_session(self, store):
         session = store.create(filename="t.csv", df=pd.DataFrame({"a": [1]}))
         assert store.get(session.dataset_id) is session
+
+
+def test_get_malformed_id_returns_none_without_persistence(store, monkeypatch):
+    from app.core import session_store as session_store_module
+
+    def unexpected_call(_dataset_id):
+        pytest.fail("Persistence must not be called for malformed dataset IDs")
+
+    monkeypatch.setattr(session_store_module.persistence, "load_session_data", unexpected_call)
+    assert store.get("../escape") is None
+    assert store.get("not-a-uuid") is None
+
+
+def test_require_malformed_id_raises_key_error(store):
+    with pytest.raises(KeyError):
+        store.require("../escape")

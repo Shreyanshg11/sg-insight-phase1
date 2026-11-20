@@ -133,8 +133,8 @@ def _generate_feature_code(entry, new_cols: list[str]) -> str:
             "year": f"df[{col!r} + '_year'] = _parsed.dt.year",
             "month": f"df[{col!r} + '_month'] = _parsed.dt.month",
             "day": f"df[{col!r} + '_day'] = _parsed.dt.day",
-            "dayofweek": f"df[{col!r} + '_dayofweek'] = _parsed.dt.dayofweek",
-            "is_weekend": f"df[{col!r} + '_is_weekend'] = _parsed.dt.dayofweek.isin([5, 6])",
+            "dayofweek": f"df[{col!r} + '_dayofweek'] = _parsed.dt.day_of_week",
+            "is_weekend": f"df[{col!r} + '_is_weekend'] = _parsed.dt.day_of_week.isin([5, 6])",
         }
         lines += [part_exprs[p] for p in parts if p in part_exprs]
         return "\n".join(lines)

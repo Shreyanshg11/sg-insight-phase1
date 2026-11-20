@@ -5,6 +5,7 @@ from app.models.schemas import (
     CompareMethodsResponse
 )
 from app.engines.cleaning_engine import apply_action, compare_missing_value_methods
+from app.core.action_policy import is_review_only
 
 router = APIRouter(prefix="/api/dataset", tags=["cleaning"])
 
@@ -63,7 +64,20 @@ async def apply_cleaning_action(req: ApplyActionRequest):
     confirm on the frontend. This endpoint performs the actual mutation and pushes
     a new version onto the linear undo stack, logging a full Analyst Notebook entry.
     """
+    return apply_cleaning_sync(req)
+
+
+def apply_cleaning_sync(req: ApplyActionRequest) -> ApplyActionResponse:
+    """The single cleaning-mutation path. Synchronous on purpose so the Copilot
+    confirm endpoint can run it inside its per-dataset lock."""
     session = _get_session(req.dataset_id)
+    if is_review_only(req.action):
+        # Informational recommendations (e.g. outlier flag_for_review) never change data. Refuse before
+        # touching the dataset, so no version or log entry can result from a mistaken Apply.
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{req.action}' is a review-only recommendation and cannot be applied: it never changes your "
+                   "data. Review the flagged values, then dismiss the recommendation when you have handled it.")
     try:
         new_df, preview = apply_action(session.current, req.step, req.action, req.column, req.params)
     except ValueError as e:

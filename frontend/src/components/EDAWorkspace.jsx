@@ -7,6 +7,7 @@ import EDAMissingPatterns from "./eda/EDAMissingPatterns";
 import EDARelationships from "./eda/EDARelationships";
 import EDACategoryAnalysis from "./eda/EDACategoryAnalysis";
 import EDATimeAnalysis from "./eda/EDATimeAnalysis";
+import EDADatasetIntelligence from "./eda/EDADatasetIntelligence";
 import TabNav from "./ui/TabNav";
 import LoadingState from "./ui/LoadingState";
 import ErrorState from "./ui/ErrorState";
@@ -21,6 +22,7 @@ const SECTIONS = [
   { key: "relationships", label: "Relationships" },
   { key: "category_analysis", label: "Category Analysis" },
   { key: "time_analysis", label: "Time Analysis" },
+  { key: "dataset_intelligence", label: "Dataset Intelligence" },
 ];
 
 /**
@@ -138,6 +140,10 @@ export default function EDAWorkspace({ datasetId }) {
           overview.categorical_columns.length > 0
             ? <EDACategoryAnalysis datasetId={datasetId} columns={overview.categorical_columns} selected={categoryColumn} onSelect={setCategoryColumn} filters={filters} />
             : <EmptyState message="No categorical columns detected in this dataset." />
+        )}
+
+        {activeSection === "dataset_intelligence" && (
+          <EDADatasetIntelligence datasetId={datasetId} />
         )}
 
         {activeSection === "time_analysis" && (

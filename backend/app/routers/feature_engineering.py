@@ -31,6 +31,11 @@ async def apply_feature_action_endpoint(req: ApplyFeatureActionRequest):
     transform here ADDS new column(s) to the dataset rather than overwriting the
     source column, then pushes a new version onto the same undo/version stack.
     """
+    return apply_feature_sync(req)
+
+
+def apply_feature_sync(req: ApplyFeatureActionRequest) -> ApplyFeatureActionResponse:
+    """The single feature-mutation path (synchronous; see apply_cleaning_sync)."""
     session = _get_session(req.dataset_id)
     try:
         new_df, preview = apply_feature_action(

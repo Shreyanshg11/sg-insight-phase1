@@ -1,18 +1,24 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import upload, profiling, cleaning, health, versioning, feature_engineering, eda, analysis, visualization, report, copilot, filtering, samples
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from app.core.rate_limit import limiter
+from app.routers import upload, profiling, cleaning, health, versioning, feature_engineering, eda, analysis, visualization, report, copilot, filtering, samples, ollama, recommendations
 
 app = FastAPI(
     title="SG-Insight API",
-    description="AI-assisted data analytics workbench — backend for upload, profiling, "
+    description="AI-assisted data analytics workbench â€” backend for upload, profiling, "
                 "and human-confirmed cleaning actions (Phase 1).",
     version="0.1.0",
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # Comma-separated list, e.g. "https://sg-insight.onrender.com,https://my-domain.com".
 # Falls back to the two local dev ports so `npm run dev` keeps working untouched.
-_default_origins = "http://localhost:5173,http://localhost:3000"
+_default_origins = "http://localhost:5173,http://localhost:3000,http://localhost:5174,http://127.0.0.1:5180"
 _cors_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", _default_origins).split(",") if o.strip()]
 
 app.add_middleware(
@@ -36,8 +42,12 @@ app.include_router(report.router)
 app.include_router(copilot.router)
 app.include_router(filtering.router)
 app.include_router(samples.router)
+app.include_router(ollama.router)
+app.include_router(recommendations.router)
 
 
 @app.get("/")
 async def root():
     return {"status": "ok", "service": "sg-insight-api"}
+
+

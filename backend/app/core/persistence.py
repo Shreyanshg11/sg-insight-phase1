@@ -27,6 +27,7 @@ import json
 import os
 import pickle
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -90,7 +91,23 @@ def init_db():
         """)
 
 
+def _validated_dataset_id(dataset_id: str) -> str:
+    """Accept only canonical UUID strings before using IDs in filesystem paths."""
+    if not isinstance(dataset_id, str):
+        raise ValueError("Invalid dataset ID")
+    try:
+        normalized = str(uuid.UUID(dataset_id))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ValueError("Invalid dataset ID") from exc
+    if normalized != dataset_id:
+        raise ValueError("Dataset ID must be a canonical UUID")
+    return normalized
+
+
 def _version_path(dataset_id: str, version_number: int) -> Path:
+    dataset_id = _validated_dataset_id(dataset_id)
+    if isinstance(version_number, bool) or not isinstance(version_number, int) or version_number < 1:
+        raise ValueError("Invalid version number")
     return VERSIONS_DIR / dataset_id / f"v{version_number}.pkl"
 
 
@@ -102,8 +119,9 @@ def save_session(session) -> None:
     session's current version count, so undo/restore actually frees that
     version's storage rather than leaving orphaned files behind.
     """
+    dataset_id = _validated_dataset_id(session.dataset_id)
     _ensure_dirs()
-    session_dir = VERSIONS_DIR / session.dataset_id
+    session_dir = VERSIONS_DIR / dataset_id
     session_dir.mkdir(parents=True, exist_ok=True)
 
     existing_numbers = {int(p.stem[1:]) for p in session_dir.glob("v*.pkl")}
@@ -160,6 +178,7 @@ def load_session_data(dataset_id: str) -> Optional[dict]:
     DatasetSession + its ActionLogEntry list from, or None if this
     dataset_id was never persisted (e.g. genuinely doesn't exist).
     """
+    dataset_id = _validated_dataset_id(dataset_id)
     with _connect() as conn:
         row = conn.execute("SELECT * FROM sessions WHERE dataset_id = ?", (dataset_id,)).fetchone()
         if row is None:
