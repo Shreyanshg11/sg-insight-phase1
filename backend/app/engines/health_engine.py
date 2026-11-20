@@ -14,6 +14,7 @@ produced the status, so nothing on the dashboard is an unexplained traffic light
 import re
 import pandas as pd
 import numpy as np
+from app.core.iqr import finite_values, iqr_bounds, outlier_mask
 from pydantic import BaseModel
 from typing import List
 from app.core.dtype_utils import stringy_columns
@@ -87,15 +88,11 @@ def _outlier_health(df: pd.DataFrame) -> HealthCategory:
     affected = []
     total_outliers = 0
     for col in df.select_dtypes(include=[np.number]).columns:
-        series = df[col].dropna()
-        if len(series) < 8:
+        series = finite_values(df[col])
+        bounds = iqr_bounds(series)  # shared IQR policy
+        if bounds is None:
             continue
-        q1, q3 = series.quantile(0.25), series.quantile(0.75)
-        iqr = q3 - q1
-        if iqr == 0:
-            continue
-        lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
-        count = int(((series < lower) | (series > upper)).sum())
+        count = int(outlier_mask(series, bounds).sum())
         if count > 0:
             affected.append(col)
             total_outliers += count

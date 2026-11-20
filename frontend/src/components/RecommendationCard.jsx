@@ -2,6 +2,7 @@ import { useState } from "react";
 import ConfidenceMeter from "./ConfidenceMeter";
 import LoadingState from "./ui/LoadingState";
 import ErrorState from "./ui/ErrorState";
+import { canApply, isReviewOnly } from "../lib/recommendationState";
 
 const STEP_LABELS = {
   duplicate_manager: "Duplicate Manager",
@@ -25,9 +26,9 @@ const VALUE_TIER_STYLES = {
 };
 
 const OUTLIER_TIER_STYLES = {
-  likely_data_entry_error: { label: "Likely error", className: "text-signal-red" },
-  legitimate_rare_value: { label: "Legitimate rare", className: "text-signal-green" },
-  statistically_unusual: { label: "Unusual", className: "text-ink-500" },
+  likely_data_entry_error: { label: "Possible data-quality issue", className: "text-signal-red" },
+  legitimate_rare_value: { label: "Recurring value", className: "text-signal-green" },
+  statistically_unusual: { label: "Unclassified outlier", className: "text-ink-500" },
 };
 
 const MISSINGNESS_STYLES = {
@@ -241,8 +242,16 @@ export default function RecommendationCard({ recommendation, onConfirm, onDismis
   const isFuzzyMerge = recommendation.step === "category_merge_center" && recommendation.recommended_action === "fuzzy_merge";
   const isMissingValue = recommendation.step === "missing_value_center";
   const isOutlier = recommendation.step === "outlier_center";
+  // Review-only advice (e.g. flag_for_review) never changes data: no Apply, only "mark as reviewed".
+  const reviewOnly = isReviewOnly(recommendation);
+  const applicable = canApply(recommendation);
 
   const handleApply = async (overrides = {}) => {
+    if (!applicable && !overrides.action) {
+      // Defence in depth: an unsupported recommended action must never reach the backend from here.
+      setError("This recommendation is review-only and cannot be applied.");
+      return;
+    }
     setStatus("applying");
     setError(null);
     try {
@@ -383,6 +392,13 @@ export default function RecommendationCard({ recommendation, onConfirm, onDismis
         </div>
       )}
 
+      {reviewOnly && (
+        <p className="mt-3 rounded border border-graphite-border bg-graphite-800 px-3 py-2 text-xs text-ink-300">
+          Review-only: these values are statistically unusual, not confirmed errors. Nothing here changes your
+          data. Check the flagged values, then mark this as reviewed.
+        </p>
+      )}
+
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <span className="font-mono text-xs text-ink-500">
           Recommended action: <span className="text-ink-100">{recommendation.recommended_action}</span>
@@ -399,9 +415,9 @@ export default function RecommendationCard({ recommendation, onConfirm, onDismis
               disabled={status === "applying"}
               className="rounded border border-graphite-border px-3 py-1.5 text-xs text-ink-300 hover:bg-graphite-700 disabled:opacity-50"
             >
-              {isFuzzyMerge ? "Ignore" : "Dismiss"}
+              {reviewOnly ? "Mark as reviewed" : isFuzzyMerge ? "Ignore" : "Dismiss"}
             </button>
-            {!isFuzzyMerge && (
+            {!isFuzzyMerge && applicable && (
               <button
                 onClick={() => handleApply()}
                 disabled={status === "applying"}

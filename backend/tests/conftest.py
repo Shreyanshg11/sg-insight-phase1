@@ -17,6 +17,7 @@ import tempfile
 # even that one-time import-time side effect lands in a throwaway directory
 # instead of the real one.
 os.environ.setdefault("SG_INSIGHT_DATA_DIR", tempfile.mkdtemp(prefix="sg_insight_test_"))
+os.environ["SG_INSIGHT_RATE_LIMIT_ENABLED"] = "false"
 
 import numpy as np
 import pandas as pd

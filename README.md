@@ -96,25 +96,22 @@ nothing mutates silently.
 ```bash
 cd backend
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY=sk-ant-...   # required only for the AI Insight endpoint (#15)
+# Local development uses Ollama; an Anthropic API key is not required.
 uvicorn app.main:app --reload --port 8000
 ```
 
-Everything else — upload, profiling, cleaning, feature engineering, EDA, and the
-Analysis Recommendation Engine's actual computations (`run-analysis`) — works with
-no API key at all. Only `POST /api/dataset/ai-insight` and the Copilot's
-`POST /api/dataset/copilot/message` need `ANTHROPIC_API_KEY` set; without it,
-those endpoints return a `503` with a message pointing back here instead of
-failing unclearly (`/copilot/confirm-action` never calls the AI model at all,
-so it works with no key). Optionally override the model with
-`ANTHROPIC_MODEL` (defaults to `claude-sonnet-5`).
-
+Everything else — upload, profiling, cleaning, feature engineering, EDA, and
+the Analysis Recommendation Engine's `run-analysis` computations work without
+an external AI API key. AI endpoints use the configured provider: Ollama for
+local development by default, or Anthropic when `AI_PROVIDER=anthropic` and
+`ANTHROPIC_API_KEY` is configured. The local Ollama model defaults to
+`qwen2.5:3b`.
 Session data (uploaded datasets, version history, pinned charts) persists to
 `backend/data/` by default — delete that directory to reset all state, or
 point it elsewhere with `SG_INSIGHT_DATA_DIR=/some/path`.
 
 **Tests**: `pip install -r requirements-dev.txt` then `pytest` from `backend/`
-— 199 tests across every engine, ~5 seconds, no API key or network needed
+The backend regression suite currently has 939 passing tests (verified locally).
 (the two test files touching the Anthropic API mock the client entirely).
 
 ### Frontend
@@ -201,10 +198,12 @@ Implemented so far (backend fully tested; frontend builds clean):
     subpacket (#19) rather than duplicated here.
   - *Fuzzy category merge (#7)*: new `find_fuzzy_category_groups()` groups
     category values via a small built-in alias table (USA/US/United
-    States/America, UK variants, UAE variants) plus generic
-    `difflib.SequenceMatcher` similarity (≥0.72) for everything else, capped
-    at 150 distinct values to avoid an O(n²) blowup on high-cardinality
-    columns. New `apply_action` branches: `fuzzy_merge` (params: `values`,
+    States/America, UK variants, UAE variants) plus a deliberately strict
+    spelling-variant check (Damerau-Levenshtein distance ≤ 1, both values ≥ 5
+    characters, same word count, no digit differences; see "Phase 1" below),
+    capped at 150 distinct values. *(Updated: the original `difflib` ≥ 0.72
+    rule was replaced because similar spelling is not the same meaning —
+    Australia/Austria, Male/Female.)* New `apply_action` branches: `fuzzy_merge` (params: `values`,
     `canonical`) and `rename_category` (params: `old_value`, `new_value`).
     Never auto-merges — frontend shows the grouped values, suggested
     canonical, and similarity score, with explicit Merge / Rename / Ignore
@@ -1109,3 +1108,143 @@ changed; this session made the result installable once it's up, not the
   insights come with the Claude API integration in Phase 2/3.
 - File size capped at 50MB in the upload endpoint; raise `MAX_FILE_MB` in
   `routers/upload.py` if needed.
+
+
+## Hardening phases 1-3 — fuzzy merge safety, Copilot proposal lifecycle, outlier methodology
+
+### Phase 1 — fuzzy category matching (`cleaning_engine.py`)
+- Two tiers, both **review-only suggestions** that are never merged automatically:
+  `alias` (built-in USA/UK/UAE groups) and `spelling_variant` (typos only).
+- Spelling variants need: Damerau-Levenshtein distance ≤ 1, both values ≥ 5
+  characters, equal word count, identical digit sequences, and any differing
+  word ≥ 4 characters (so `Region 1`/`Region 2`, `Product A`/`Product B`,
+  `Male`/`Female`, `Australia`/`Austria` never match).
+- Groups are cliques (every pair must qualify), never transitive chains. The
+  suggested canonical for spelling variants is the most frequent spelling.
+- `fuzzy_merge` execution compares with strip + casefold, requires ≥ 2 distinct
+  existing values and a non-empty canonical, and answers invalid or zero-row
+  requests with HTTP 400 and **no new dataset version**.
+
+### Phase 2 — Copilot proposal lifecycle (`copilot_proposals.py`, `proposal_store.py`, `action_policy.py`)
+The browser and the LLM never decide what gets executed. A proposal is
+rebuilt by the server from a genuine, current backend recommendation.
+
+1. `POST /api/dataset/copilot/message` — the LLM's `proposed_action` is only a
+   hint. The server matches it to an executable recommendation, rebuilds
+   `step`/`category`, `action`, columns, `params` (always `{}`), `reason` and
+   `confidence` from that recommendation, dry-runs it on a copy, and stores it.
+   Otherwise it is dropped and `proposal_note` (also appended to the reply)
+   says why. `has_more_suggestions` is computed by the server.
+2. The response's `proposed_action` carries `proposal_id`, `dataset_version`,
+   `status: "pending"` and `expires_at` (30 min; `SG_INSIGHT_PROPOSAL_TTL_SECONDS`).
+3. `POST .../copilot/confirm-action` with `proposal_id` executes **only the stored
+   action**. Statuses: `pending → confirming → confirmed | rejected`,
+   `pending → dismissed | expired`. Checks: proposal belongs to the dataset
+   (404), is pending (409 already confirmed / dismissed / rejected, 410 expired),
+   the dataset state is unchanged since creation (409 stale — the state token
+   is `version + last log timestamp`, so undo-then-new-action is also stale),
+   and the recommendation still exists. A submitted `proposed_action` is
+   optional; if present and different from the stored one → 400.
+   Legacy clients that send only `proposed_action` are still accepted, but it
+   must match a current recommendation; their params/reason/confidence are ignored.
+4. `POST .../copilot/dismiss-action` — idempotent; 409 once confirmed.
+5. Concurrency: a per-dataset lock serialises confirmations in a process and the
+   `pending → confirming` change is an atomic SQL compare-and-set, so repeated
+   or simultaneous confirms mutate at most once.
+
+**Review-only rules** (single definition: `app/core/action_policy.py`):
+`flag_for_review` (all outlier recommendations) is never executable anywhere;
+`fuzzy_merge` is never executable through Copilot (use the recommendation card,
+where you choose the values). Outlier clip/drop/convert-to-missing remain
+manual actions on the Outlier Center. Review-only items do not count towards
+"more suggestions".
+
+**Storage and limitations:** proposals live in the same SQLite file as dataset
+sessions (`backend/data/sessions.db`, table `copilot_proposals`), so they survive
+restarts. The dataframe cache is still per process (multi-worker deployments
+need a shared session cache); a proposal left in `confirming` by a hard crash
+must be requested again; expired rows are not purged automatically.
+
+### Phase 3 — outlier methodology (`app/core/iqr.py`, `outlier_engine.py`)
+- **One IQR implementation** (`app/core/iqr.py`) is used by the outlier engine,
+  cleaning recommendations and `outlier_center` actions, quality score, health
+  check, Dataset Intelligence, EDA profile, feature-engineering scaling advice
+  and chart outlier highlighting. Policy: finite numeric values only (NaN
+  missing, ±inf ignored, booleans excluded), at least 8 values, IQR > 0, pandas
+  linear quartiles. Intentional differences: the quality score uses the 3.0×
+  fence as an "extreme value" proxy; box plots keep per-group whiskers.
+- **An IQR outlier is statistically unusual, not automatically wrong.** Every
+  flagged value is a *statistical outlier*; evidence may add one label:
+  *potential data-quality issue* (far-out and ~10×/100× the median, with a gap
+  to the bulk and not explained by a long-tailed distribution, or a plausible
+  sign flip in a ≥ 95 % non-negative column), *recurring value* (the exact value
+  repeats) or *unclassified*. The legacy tier keys (`likely_data_entry_error`,
+  `legitimate_rare_value`, `statistically_unusual`) are unchanged for API
+  compatibility; `classification` and `classification_label` carry the honest names.
+  A *confirmed invalid value* is never assigned by the engine.
+- Skewed/long-tailed columns are reported with a limitation; all-positive
+  columns are additionally checked on a log scale. No business constraints are invented.
+- **Confidence** is an evidence score, not a probability: potential issues ≤ 0.70,
+  other labels ≤ 0.50, column confidence = mean over all flagged points (it used
+  to be the maximum, which let one point set the whole column).
+- Outlier actions still require explicit confirmation, act on **all** statistical
+  outliers (the card says so) and refuse columns whose fences are unreliable (HTTP 400).
+
+
+## Phase A — cleaning recommendation lifecycle (stable ids, persisted dismissal, review-only safety)
+
+- **Stable identity** (`backend/app/core/recommendation_identity.py`): `id` is now `rk1_` + a hash of what a
+  recommendation is *about* (duplicates: step+action; missing values: step+column, *not* the suggested method;
+  outliers/normalize: step+column+action; fuzzy merge: step+column+action+sorted normalized members). Counts and
+  fences are evidence, not identity. The same recommendation has the same id on every request, after a restart and in
+  any dataset; persisted status is keyed by `(dataset_id, id)`, so datasets never interfere.
+- **Persisted status** (`backend/app/core/recommendation_store.py`): additive tables `recommendation_status` and
+  `recommendation_events` in the same SQLite file, created lazily with `CREATE TABLE IF NOT EXISTS` (no migration step; an
+  older build simply ignores them). Dismissal is dataset-scoped, not version-scoped: it survives apply, undo, restore and
+  recomputation. It never touches session data: no new version, no log entry, no dataframe change. Nothing is deleted;
+  restoring sets the status back to `open` and the history stays in `recommendation_events`.
+- **Routes** (`backend/app/routers/recommendations.py`):
+  `GET /api/dataset/{id}/recommendations?status=open|dismissed|all`,
+  `POST /api/dataset/{id}/recommendations/{rec_key}/dismiss`, `POST .../restore`. Dismiss answers 404 for a key that is
+  not a current recommendation of that dataset and 409 if an optional `expected_state_token` is stale; repeats are
+  idempotent (`changed: false`). `GET /api/dataset/{id}/quality` still returns every recommendation, now with `status`,
+  `review_only`, `executable`, `dismissed_at`, `changed_since_dismissed` and a top-level `recommendation_counts`.
+- **Review-only safety:** `flag_for_review` recommendations carry `review_only: true, executable: false`; the UI shows
+  no Apply button (only "Mark as reviewed", which is a dismissal) and `POST /apply-action` rejects the action with a clear
+  400 before touching data. Explicit outlier actions (clip, convert-to-missing, drop-rows) still work through the API.
+- **Frontend:** `frontend/src/lib/recommendationState.js` (pure, unit-tested with `npm test`), optimistic dismiss/restore
+  with rollback in `WorkbenchPage.jsx`, `DismissedRecommendations.jsx`, three distinct Cleaning-tab states (outstanding /
+  all dismissed / none), and `npm run test:e2e` which renders the real page in jsdom against a live backend.
+- **Not in Phase A:** Feature Engineering dismissals (still a React Set), Copilot honouring dismissals, proposal
+  listing/preview, row-level outlier flags, stage-wide caching of profile/quality.
+
+
+## AI provider: Ollama locally, Anthropic on Render
+
+SG-Insight's AI features (AI Insight, Dataset Intelligence, Copilot, Report Builder) go through one provider switch
+(`backend/app/engines/llm_client.py`). Grounding checks, proposal validation, review-only rules and the human-confirmation flow
+are unchanged and provider-independent.
+Older sections of this README that mention `ANTHROPIC_API_KEY` for a single endpoint describe the earlier Anthropic-only setup;
+this section is current.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AI_PROVIDER` | `auto` | `auto`, `ollama` or `anthropic`. `auto` picks Anthropic when running on Render (Render sets `RENDER=true`), otherwise Ollama. Having an API key locally does **not** switch `auto` away from Ollama. |
+| `ANTHROPIC_API_KEY` | none | Secret. Set it only as an environment variable (Render dashboard); it is never read from files, logged, or returned by any endpoint. |
+| `ANTHROPIC_MODEL` | `claude-haiku-5-5` | Any Messages API model id. |
+| `ANTHROPIC_EFFORT` | `low` | `low`, `medium`, `high`, `xhigh` or `max` (sent as `output_config.effort`). |
+| `ANTHROPIC_TIMEOUT` | `120` | Seconds per request. |
+| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Only for proxies and tests. |
+
+- **Local development:** nothing to configure. `OLLAMA_BASE_URL`, `OLLAMA_MODEL` and `OLLAMA_TIMEOUT` behave exactly as before.
+- **Render:** `render.yaml` sets `AI_PROVIDER=anthropic` and `ANTHROPIC_MODEL`, and declares `ANTHROPIC_API_KEY` with `sync: false`, so
+  Render asks you for the value in the dashboard and it is never committed. A missing key does not stop the server: AI calls answer with a
+  clear error and the upload page banner shows "Anthropic API key not configured on the server".
+- **Claude Haiku 5.5 specifics handled for you:** `temperature`, `top_p` and `top_k` are never sent; requests never end on an assistant
+  turn (no prefill); JSON replies are requested by instruction and cleaned of code fences; thinking tokens count toward `max_tokens`, so
+  headroom is added; thinking blocks from a tool-calling turn are passed back unmodified.
+- **Status:** `GET /api/ai/status` keeps its existing fields and adds `provider`. For Anthropic it also reports `credentials_configured`
+  (true/false, never the key) and uses a free `GET /v1/models/{model}` check, cached for 60 s. States: `ready`, `missing_credentials`,
+  `invalid_credentials`, `model_unavailable`, `disconnected`, `unavailable`, `misconfigured`.
+- **Tests:** `python -m pytest -q tests/test_llm_provider.py` (no network or key needed) and `npm test` in `frontend/`.
+- **Not included:** automatic retries and streaming.

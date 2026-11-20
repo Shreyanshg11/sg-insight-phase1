@@ -189,7 +189,7 @@ def make_inventory_supply_chain_df(n=190, seed=19):
 def make_energy_consumption_df(n=350, seed=20):
     rng = np.random.RandomState(seed)
     t = pd.date_range("2024-01-01", periods=n, freq="D")
-    weekday = t.dayofweek < 5
+    weekday = t.day_of_week < 5
     base = np.where(weekday, 40, 25)
     df = pd.DataFrame({
         "date": t,

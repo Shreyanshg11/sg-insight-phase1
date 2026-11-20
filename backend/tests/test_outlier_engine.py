@@ -31,7 +31,7 @@ class TestOutlierTiers:
         summary = classify_outliers_for_column(tiered_df, "price")
         row0 = next(p for p in summary.points if p.row_index == 0)
         assert row0.tier == "likely_data_entry_error"
-        assert row0.confidence >= 0.8
+        assert 0.5 < row0.confidence <= 0.70  # evidence score, deliberately capped; never near-certain
 
     def test_repeated_far_value_classified_as_legitimate(self, tiered_df):
         summary = classify_outliers_for_column(tiered_df, "price")

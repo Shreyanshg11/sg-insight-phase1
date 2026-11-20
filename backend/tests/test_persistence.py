@@ -83,3 +83,31 @@ class TestPersistenceRoundTrip:
         store2 = SessionStore()
         with pytest.raises(RuntimeError, match="missing its version"):
             store2.get(did)
+
+
+def test_version_path_rejects_path_traversal(isolated_data_dir):
+    from app.core import persistence
+
+    with pytest.raises(ValueError, match="Invalid dataset ID"):
+        persistence._version_path("../escape", 1)
+
+
+def test_load_rejects_invalid_id_before_database_access(isolated_data_dir, monkeypatch):
+    from app.core import persistence
+
+    def unexpected_connect():
+        pytest.fail("Database must not be accessed for an invalid dataset ID")
+
+    monkeypatch.setattr(persistence, "_connect", unexpected_connect)
+    with pytest.raises(ValueError, match="Invalid dataset ID"):
+        persistence.load_session_data("../escape")
+
+
+def test_save_rejects_invalid_id_before_creating_paths(isolated_data_dir):
+    from types import SimpleNamespace
+    from app.core import persistence
+
+    with pytest.raises(ValueError, match="Invalid dataset ID"):
+        persistence.save_session(SimpleNamespace(dataset_id="../escape"))
+
+    assert not (isolated_data_dir / "versions" / "escape").exists()

@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from app.core.session_store import store
+from app.core.rate_limit import limiter
 from app.models.schemas import GenerateReportRequest, DraftReportPlanRequest, DraftReportPlanResponse
 from app.engines.report_engine import generate_report
 from app.engines.report_builder_engine import draft_report_plan
@@ -20,7 +21,8 @@ def _get_session(dataset_id: str):
 
 
 @router.post("/report/draft-plan", response_model=DraftReportPlanResponse)
-async def draft_report_plan_endpoint(req: DraftReportPlanRequest):
+@limiter.limit("3/minute")
+async def draft_report_plan_endpoint(request: Request, req: DraftReportPlanRequest):
     """
     Smart Report Builder (session 13) — AI curation step. Returns a PLAN
     (which sections, which analyses, why), never a rendered report; the
@@ -30,7 +32,7 @@ async def draft_report_plan_endpoint(req: DraftReportPlanRequest):
     """
     session = _get_session(req.dataset_id)
     try:
-        plan = draft_report_plan(
+        plan = await draft_report_plan(
             df=session.current, goal_keywords=session.goal_keywords,
             investigation_goal=session.investigation_goal,
             available_analyses=[a.model_dump() for a in req.available_analyses],
@@ -42,7 +44,8 @@ async def draft_report_plan_endpoint(req: DraftReportPlanRequest):
 
 
 @router.post("/report")
-async def generate_report_endpoint(req: GenerateReportRequest):
+@limiter.limit("5/minute")
+async def generate_report_endpoint(request: Request, req: GenerateReportRequest):
     """
     The last stage of the pipeline — composes a report from every other
     engine's already-computed output (profile, quality, health, the session's

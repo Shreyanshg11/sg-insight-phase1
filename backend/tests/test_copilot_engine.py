@@ -1,41 +1,77 @@
+
+import asyncio
 import json
-import types
+
 import pandas as pd
 import pytest
+
 from app.engines import copilot_engine
 
 
-class FakeToolUseBlock:
-    def __init__(self, id, name, input):
-        self.type = "tool_use"
-        self.id = id
-        self.name = name
-        self.input = input
+def _json_response(
+    reply="Analysis completed.",
+    proposed_action=None,
+    has_more_suggestions=False,
+):
+    return {
+        "message": {
+            "role": "assistant",
+            "content": json.dumps({
+                "reply": reply,
+                "proposed_action": proposed_action,
+                "has_more_suggestions": has_more_suggestions,
+            }),
+        }
+    }
 
 
-class FakeTextBlock:
-    def __init__(self, text):
-        self.type = "text"
-        self.text = text
+def _draft_response(content="I have reviewed the available dataset information."):
+    return {
+        "message": {
+            "role": "assistant",
+            "content": content,
+        }
+    }
 
 
-def _fake_client(responses):
-    call_log = []
+def _tool_response(name="get_session_summary", arguments=None):
+    return {
+        "message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": name,
+                        "arguments": arguments or {},
+                    }
+                }
+            ],
+        }
+    }
 
-    def create(**kwargs):
-        call_log.append(kwargs)
-        return responses[len(call_log) - 1]
 
-    client = types.SimpleNamespace(messages=types.SimpleNamespace(create=create))
-    return client, call_log
+def _install_fake_ollama(monkeypatch, responses):
+    calls = []
 
+    async def fake_ollama_chat(messages, **kwargs):
+        calls.append({
+            "messages": messages,
+            "kwargs": kwargs,
+        })
 
-def _install_fake_anthropic(monkeypatch, responses):
-    client, call_log = _fake_client(responses)
-    fake_module = types.SimpleNamespace(Anthropic=lambda api_key: client)
-    import sys
-    monkeypatch.setitem(sys.modules, "anthropic", fake_module)
-    return call_log
+        if not responses:
+            raise RuntimeError("No more fake responses configured.")
+
+        return responses.pop(0)
+
+    monkeypatch.setattr(
+        copilot_engine,
+        "ollama_chat",
+        fake_ollama_chat,
+    )
+
+    return calls
 
 
 @pytest.fixture
@@ -46,105 +82,346 @@ def messy_df():
     })
 
 
-class TestSendMessageRequiresApiKey:
-    def test_missing_api_key_raises(self, monkeypatch, messy_df):
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
-            copilot_engine.send_message(messy_df, [], None, "hello", [])
-
-
-class TestSendMessageToolLoop:
-    def test_tool_call_then_final_answer(self, monkeypatch, messy_df):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")
-        tool_use_response = types.SimpleNamespace(
-            stop_reason="tool_use",
-            content=[FakeToolUseBlock("t1", "get_cleaning_recommendations", {})],
+def _send(df, message="Analyze my dataset.", history=None):
+    return asyncio.run(
+        copilot_engine.send_message(
+            df=df,
+            goal_keywords=[],
+            investigation_goal="Understand dataset quality",
+            message=message,
+            history=history or [],
         )
-        final_json = json.dumps({
-            "reply": "I found a missing-value issue in revenue.",
-            "proposed_action": {
-                "kind": "cleaning", "step": "missing_value_center", "action": "impute_median",
-                "column": "revenue", "params": {}, "reason": "1 missing value", "confidence": 0.8,
-            },
-            "has_more_suggestions": True,
-        })
-        final_response = types.SimpleNamespace(stop_reason="end_turn", content=[FakeTextBlock(final_json)])
-        call_log = _install_fake_anthropic(monkeypatch, [tool_use_response, final_response])
+    )
 
-        result = copilot_engine.send_message(messy_df, [], "find revenue trends", "clean this up", [])
 
-        assert len(call_log) == 2
-        assert result["reply"] == "I found a missing-value issue in revenue."
-        assert result["proposed_action"]["step"] == "missing_value_center"
-        assert result["has_more_suggestions"] is True
+class TestSendMessage:
 
-    def test_immediate_final_answer_no_tool_calls(self, monkeypatch, messy_df):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")
-        final_json = json.dumps({"reply": "This dataset has 2 columns.", "proposed_action": None, "has_more_suggestions": False})
-        response = types.SimpleNamespace(stop_reason="end_turn", content=[FakeTextBlock(final_json)])
-        _install_fake_anthropic(monkeypatch, [response])
+    def test_does_not_require_anthropic_api_key(
+        self, monkeypatch, messy_df
+    ):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
-        result = copilot_engine.send_message(messy_df, [], None, "how many columns?", [])
+        _install_fake_ollama(
+            monkeypatch,
+            [
+                _draft_response(),
+                _json_response(),
+            ],
+        )
+
+        result = _send(messy_df)
+
+        assert result["reply"] == "Analysis completed."
+
+    def test_immediate_final_answer(self, monkeypatch, messy_df):
+        calls = _install_fake_ollama(
+            monkeypatch,
+            [
+                _draft_response("Your dataset needs cleaning."),
+                _json_response(
+                    reply="Your dataset needs cleaning.",
+                    has_more_suggestions=False,
+                ),
+            ],
+        )
+
+        result = _send(messy_df)
+
+        assert len(calls) == 2
+        assert result["reply"] == "Your dataset needs cleaning."
         assert result["proposed_action"] is None
         assert result["has_more_suggestions"] is False
+        assert result["grounded"] is True
 
-    def test_response_wrapped_in_markdown_fences_still_parses(self, monkeypatch, messy_df):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")
-        raw = "```json\n" + json.dumps({"reply": "ok", "proposed_action": None, "has_more_suggestions": False}) + "\n```"
-        response = types.SimpleNamespace(stop_reason="end_turn", content=[FakeTextBlock(raw)])
-        _install_fake_anthropic(monkeypatch, [response])
+        # Final generation must enforce JSON mode without tools.
+        assert calls[1]["kwargs"]["json_mode"] is True
+        assert "tools" not in calls[1]["kwargs"]
 
-        result = copilot_engine.send_message(messy_df, [], None, "hi", [])
-        assert result["reply"] == "ok"
+    def test_tool_call_then_final_answer(self, monkeypatch, messy_df):
+        calls = _install_fake_ollama(
+            monkeypatch,
+            [
+                _tool_response("get_cleaning_recommendations"),
+                _draft_response(
+                    "I found a missing-value issue in revenue."
+                ),
+                _json_response(
+                    reply="I found a missing-value issue in revenue.",
+                    proposed_action={
+                        "kind": "cleaning",
+                        "step": "missing_value_center",
+                        "action": "impute_median",
+                        "column": "revenue",
+                        "params": {},
+                        "reason": "A missing value was found.",
+                        "confidence": 0.8,
+                    },
+                    has_more_suggestions=True,
+                ),
+            ],
+        )
 
-    def test_invalid_json_final_answer_raises(self, monkeypatch, messy_df):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")
-        response = types.SimpleNamespace(stop_reason="end_turn", content=[FakeTextBlock("not json")])
-        _install_fake_anthropic(monkeypatch, [response])
+        result = _send(messy_df)
 
-        with pytest.raises(RuntimeError, match="valid JSON"):
-            copilot_engine.send_message(messy_df, [], None, "hi", [])
+        assert len(calls) == 3
+        assert result["proposed_action"]["kind"] == "cleaning"
+        assert result["has_more_suggestions"] is True
 
-    def test_fabricated_number_flagged_as_unverified(self, monkeypatch, messy_df):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")
-        final_json = json.dumps({"reply": "revenue is 99.9% missing", "proposed_action": None, "has_more_suggestions": False})
-        response = types.SimpleNamespace(stop_reason="end_turn", content=[FakeTextBlock(final_json)])
-        _install_fake_anthropic(monkeypatch, [response])
+        # Tool result must be passed back to Ollama.
+        second_messages = calls[1]["messages"]
+        assert any(m["role"] == "tool" for m in second_messages)
 
-        result = copilot_engine.send_message(messy_df, [], None, "how much is missing?", [])
+        # Final generation is a separate JSON-only call.
+        assert calls[2]["kwargs"]["json_mode"] is True
+        assert "tools" not in calls[2]["kwargs"]
+
+    def test_history_is_preserved(self, monkeypatch, messy_df):
+        calls = _install_fake_ollama(
+            monkeypatch,
+            [
+                _draft_response(),
+                _json_response(),
+            ],
+        )
+
+        history = [
+            {"role": "user", "content": "Show my dataset summary."},
+            {"role": "assistant", "content": "I can help with that."},
+        ]
+
+        _send(
+            messy_df,
+            message="What should I do next?",
+            history=history,
+        )
+
+        messages = calls[0]["messages"]
+
+        assert any(
+            m.get("content") == "Show my dataset summary."
+            for m in messages
+        )
+        assert any(
+            m.get("content") == "What should I do next?"
+            for m in messages
+        )
+
+    def test_fabricated_number_flagged_as_unverified(
+        self, monkeypatch, messy_df
+    ):
+        _install_fake_ollama(
+            monkeypatch,
+            [
+                _draft_response(),
+                _json_response(
+                    reply="The revenue column is 99.9% missing."
+                ),
+            ],
+        )
+
+        result = _send(messy_df)
+
         assert result["grounded"] is False
         assert len(result["unverified_figures"]) > 0
 
-    def test_too_many_tool_round_trips_raises(self, monkeypatch, messy_df):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")
-        endless = types.SimpleNamespace(
-            stop_reason="tool_use",
-            content=[FakeToolUseBlock("t1", "get_session_summary", {})],
+    def test_invalid_json_raises(self, monkeypatch, messy_df):
+        _install_fake_ollama(
+            monkeypatch,
+            [
+                _draft_response(),
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "This is not JSON.",
+                    }
+                },
+            ],
         )
-        _install_fake_anthropic(monkeypatch, [endless] * 10)
+
+        with pytest.raises(RuntimeError, match="valid JSON"):
+            _send(messy_df)
+
+    def test_empty_response_raises(self, monkeypatch, messy_df):
+        _install_fake_ollama(
+            monkeypatch,
+            [
+                _draft_response(),
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                    }
+                },
+            ],
+        )
+
+        with pytest.raises(RuntimeError, match="empty"):
+            _send(messy_df)
+
+    def test_tool_call_limit_raises(self, monkeypatch, messy_df):
+        calls = _install_fake_ollama(
+            monkeypatch,
+            [_tool_response() for _ in range(6)],
+        )
 
         with pytest.raises(RuntimeError, match="tool-call limit"):
-            copilot_engine.send_message(messy_df, [], None, "hi", [])
+            _send(messy_df)
+
+        assert len(calls) == 6
+
+    def test_unsupported_tool_raises(self, monkeypatch, messy_df):
+        _install_fake_ollama(
+            monkeypatch,
+            [_tool_response("unknown_tool")],
+        )
+
+        with pytest.raises(RuntimeError, match="unsupported tool"):
+            _send(messy_df)
+
+
+    def test_flag_for_review_is_removed_from_proposed_action(self, monkeypatch, messy_df):
+        review_only_action = {
+            "kind": "cleaning",
+            "step": "outlier_center",
+            "action": "flag_for_review",
+            "column": "revenue",
+            "params": {},
+            "reason": "Review unusual values.",
+            "confidence": 0.9,
+        }
+
+        _install_fake_ollama(
+            monkeypatch,
+            [
+                _draft_response(),
+                _json_response(
+                    reply="I recommend reviewing the unusual values.",
+                    proposed_action=review_only_action,
+                ),
+            ],
+        )
+
+        result = _send(messy_df)
+
+        assert result["proposed_action"] is None
+        assert "reviewing" in result["reply"].lower()
+
+
+
+    def test_outlier_analysis_returns_complete_verified_report(
+        self, monkeypatch, messy_df
+    ):
+        outlier_df = pd.DataFrame({
+            "revenue": [
+                100, 101, 102, 103, 104,
+                105, 106, 107, 108, 109,
+                110, 111, 112, 113, 114,
+                115, 116, 117, 118, 1000,
+            ]
+        })
+
+        _, dispatch = copilot_engine._get_tools_and_dispatch(
+            outlier_df, [], "outlier analysis"
+        )
+        expected = dispatch["get_outlier_analysis"]({
+            "column": "revenue"
+        })
+
+        assert "error" not in expected, expected
+
+        _install_fake_ollama(
+            monkeypatch,
+            [
+                _tool_response(
+                    "get_outlier_analysis",
+                    {"column": "revenue"},
+                ),
+                _draft_response("Outlier analysis completed."),
+                _json_response(
+                    reply="The outlier analysis is complete.",
+                    proposed_action=None,
+                ),
+            ],
+        )
+
+        result = _send(
+            outlier_df,
+            message="Analyze revenue outliers using the IQR classifier.",
+        )
+
+        assert "Outlier Analysis: revenue" in result["reply"]
+        assert f"Q1 | {expected['q1']}" in result["reply"]
+        assert f"Q3 | {expected['q3']}" in result["reply"]
+        assert f"IQR | {expected['iqr']}" in result["reply"]
+        assert f"Lower fence | {expected['lower_fence']}" in result["reply"]
+        assert f"Upper fence | {expected['upper_fence']}" in result["reply"]
+        assert str(expected["total_outliers"]) in result["reply"]
+        assert result["proposed_action"] is None
+        assert result["has_more_suggestions"] is False
+        assert result["grounded"] is True
+        assert result["unverified_figures"] == []
 
 
 class TestToolDispatch:
-    def test_get_column_stats_for_numeric_column(self, messy_df):
-        tools, dispatch = copilot_engine._get_tools_and_dispatch(messy_df, [], None)
-        stats = dispatch["get_column_stats"]({"column": "revenue"})
-        assert stats["missing_count"] == 1
-        assert stats["dtype"] == "float64"
 
-    def test_get_column_stats_unknown_column(self, messy_df):
-        tools, dispatch = copilot_engine._get_tools_and_dispatch(messy_df, [], None)
-        result = dispatch["get_column_stats"]({"column": "does_not_exist"})
+    def test_numeric_column_stats(self, messy_df):
+        _, dispatch = copilot_engine._get_tools_and_dispatch(
+            messy_df, [], None
+        )
+
+        result = dispatch["get_column_stats"]({
+            "column": "revenue"
+        })
+
+        assert result["column"] == "revenue"
+        assert result["missing_count"] == 1
+        assert result["dtype"] == "float64"
+
+    def test_unknown_column_returns_error(self, messy_df):
+        _, dispatch = copilot_engine._get_tools_and_dispatch(
+            messy_df, [], None
+        )
+
+        result = dispatch["get_column_stats"]({
+            "column": "unknown"
+        })
+
         assert "error" in result
 
-    def test_get_cleaning_recommendations_reuses_real_engine(self, messy_df):
-        tools, dispatch = copilot_engine._get_tools_and_dispatch(messy_df, [], None)
-        recs = dispatch["get_cleaning_recommendations"]({})
-        assert any(r["column"] == "revenue" for r in recs)
+    def test_cleaning_recommendations(self, messy_df):
+        _, dispatch = copilot_engine._get_tools_and_dispatch(
+            messy_df, [], None
+        )
 
-    def test_all_declared_tools_have_a_dispatch_entry(self, messy_df):
-        tools, dispatch = copilot_engine._get_tools_and_dispatch(messy_df, [], None)
+        result = dispatch["get_cleaning_recommendations"]({})
+
+        assert isinstance(result, list)
+        assert any(
+            item["column"] == "revenue"
+            for item in result
+        )
+
+    def test_all_tools_have_dispatch_entries(self, messy_df):
+        tools, dispatch = copilot_engine._get_tools_and_dispatch(
+            messy_df, [], None
+        )
+
+        tool_names = {
+            item["function"]["name"]
+            for item in tools
+        }
+
+        assert len(tool_names) == 7
+        assert "get_outlier_analysis" in tool_names
+        assert tool_names == set(dispatch.keys())
+
+    def test_tool_schemas_use_ollama_format(self, messy_df):
+        tools, _ = copilot_engine._get_tools_and_dispatch(
+            messy_df, [], None
+        )
+
         for tool in tools:
-            assert tool["name"] in dispatch
+            assert tool["type"] == "function"
+            assert "name" in tool["function"]
+            assert "description" in tool["function"]
+            assert "parameters" in tool["function"]

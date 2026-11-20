@@ -78,6 +78,26 @@ export async function compareMethods(datasetId, column) {
   return handle(res);
 }
 
+// Cleaning-recommendation lifecycle. Status is persisted on the server; none of these can change data.
+export async function listRecommendations(datasetId, status = "all") {
+  const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/recommendations?status=${encodeURIComponent(status)}`);
+  return handle(res);
+}
+
+export async function dismissRecommendation(datasetId, recKey) {
+  const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/recommendations/${encodeURIComponent(recKey)}/dismiss`, {
+    method: "POST",
+  });
+  return handle(res);
+}
+
+export async function restoreRecommendation(datasetId, recKey) {
+  const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/recommendations/${encodeURIComponent(recKey)}/restore`, {
+    method: "POST",
+  });
+  return handle(res);
+}
+
 export async function getVersions(datasetId) {
   const res = await fetch(`${BASE_URL}/api/dataset/${datasetId}/versions`);
   return handle(res);
@@ -251,11 +271,26 @@ export async function sendCopilotMessage(datasetId, message, history) {
   return handle(res);
 }
 
+// Confirmation is by proposal_id: the server executes only the action it stored when
+// it created the proposal, never parameters sent back from the browser.
 export async function confirmCopilotAction(datasetId, proposedAction) {
   const res = await fetch(`${BASE_URL}/api/dataset/copilot/confirm-action`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ dataset_id: datasetId, proposed_action: proposedAction }),
+    body: JSON.stringify(
+      proposedAction?.proposal_id
+        ? { dataset_id: datasetId, proposal_id: proposedAction.proposal_id }
+        : { dataset_id: datasetId, proposed_action: proposedAction },
+    ),
+  });
+  return handle(res);
+}
+
+export async function dismissCopilotAction(datasetId, proposalId) {
+  const res = await fetch(`${BASE_URL}/api/dataset/copilot/dismiss-action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dataset_id: datasetId, proposal_id: proposalId }),
   });
   return handle(res);
 }
@@ -315,4 +350,26 @@ export async function generateReport(payload) {
   const filename = match ? match[1] : `report.${payload.format === "markdown" ? "md" : payload.format}`;
   const blob = await res.blob();
   return { blob, filename };
+}
+
+export async function getAiProviderStatus() {
+  const res = await fetch(`${BASE_URL}/api/ai/status`);
+  return handle(res);
+}
+
+// Backward-compatible alias for existing integrations.
+export const getOllamaStatus = getAiProviderStatus;
+
+// ---------- Dataset Intelligence ----------
+export async function getDatasetIntelligence(datasetId, investigationGoal = "") {
+  const res = await fetch(
+    `${BASE_URL}/api/dataset/${datasetId}/dataset-intelligence`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ investigation_goal: investigationGoal || null }),
+      signal: AbortSignal.timeout(660000),
+    }
+  );
+  return handle(res);
 }

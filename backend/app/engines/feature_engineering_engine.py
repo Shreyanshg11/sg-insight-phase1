@@ -13,6 +13,7 @@ scaling_normalization, encoding (one-hot / label), log_transform.
 import uuid
 import numpy as np
 import pandas as pd
+from app.core.iqr import finite_values, iqr_bounds, outlier_mask
 
 from app.models.schemas import FeatureRecommendation
 from app.core.dtype_utils import stringy_columns
@@ -72,15 +73,11 @@ def _is_goal_relevant(columns: list[str], goal_keywords: list[str]) -> bool:
 
 
 def _iqr_outlier_ratio(series: pd.Series) -> float:
-    s = series.dropna()
-    if len(s) < 8:
+    values = finite_values(series)  # shared IQR policy (finite values, >= 8, non-zero IQR)
+    bounds = iqr_bounds(values)
+    if bounds is None:
         return 0.0
-    q1, q3 = s.quantile(0.25), s.quantile(0.75)
-    iqr = q3 - q1
-    if iqr == 0:
-        return 0.0
-    lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
-    return float(((s < lower) | (s > upper)).mean())
+    return float(outlier_mask(values, bounds).mean())
 
 
 def _max_abs_correlation(new_series: pd.Series, df: pd.DataFrame, exclude_cols: list[str]) -> float:
@@ -511,10 +508,10 @@ def apply_feature_action(df: pd.DataFrame, category: str, action: str, columns: 
             out[f"{col}_day"] = parsed.dt.day
             new_cols.append(f"{col}_day")
         if "dayofweek" in parts:
-            out[f"{col}_dayofweek"] = parsed.dt.dayofweek
+            out[f"{col}_dayofweek"] = parsed.dt.day_of_week
             new_cols.append(f"{col}_dayofweek")
         if "is_weekend" in parts:
-            out[f"{col}_is_weekend"] = parsed.dt.dayofweek.isin([5, 6])
+            out[f"{col}_is_weekend"] = parsed.dt.day_of_week.isin([5, 6])
             new_cols.append(f"{col}_is_weekend")
         preview = {"new_columns": new_cols, "unparsed_rows": int(parsed.isna().sum())}
 

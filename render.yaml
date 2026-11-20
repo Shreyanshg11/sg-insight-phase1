@@ -21,15 +21,19 @@ services:
     dockerfilePath: ./Dockerfile
     healthCheckPath: /
     envVars:
-      - key: ANTHROPIC_API_KEY
-        sync: false  # set in the Render Dashboard — never commit this
-      - key: ANTHROPIC_MODEL
-        value: claude-sonnet-5
       # Must match the frontend static site's actual onrender.com URL below —
       # update both if either service's assigned name/URL differs from what
       # you set here.
       - key: CORS_ORIGINS
         value: https://sg-insight-frontend.onrender.com
+      # AI provider: Render uses the Anthropic API (local development uses Ollama - see README, "AI provider").
+      # ANTHROPIC_API_KEY is a secret: `sync: false` makes Render ask for it in the dashboard, so it is never stored here.
+      - key: AI_PROVIDER
+        value: anthropic
+      - key: ANTHROPIC_MODEL
+        value: claude-haiku-5-5
+      - key: ANTHROPIC_API_KEY
+        sync: false
 
   - type: web
     name: sg-insight-frontend

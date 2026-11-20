@@ -138,6 +138,14 @@ class SessionStore:
         return session
 
     def get(self, dataset_id: str) -> Optional[DatasetSession]:
+        if not isinstance(dataset_id, str):
+            return None
+        try:
+            if str(uuid.UUID(dataset_id)) != dataset_id:
+                return None
+        except (ValueError, TypeError, AttributeError):
+            return None
+
         if dataset_id in self._sessions:
             return self._sessions[dataset_id]
 

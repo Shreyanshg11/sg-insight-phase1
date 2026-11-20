@@ -1,14 +1,15 @@
 """
-EDA Engine (#13 — "Improve EDA Navigation").
+EDA Engine (#13 â€” "Improve EDA Navigation").
 
 Each function below is independently fetchable (its own endpoint in
 routers/eda.py) rather than one monolithic "run EDA" call, matching the
 brief's Overview / Distributions / Correlation / Missing Patterns /
 Relationships / Category Analysis / Time Analysis sections and the frontend
-EDA sub-navigation. Read-only — this module never mutates the dataset.
+EDA sub-navigation. Read-only â€” this module never mutates the dataset.
 """
 import numpy as np
 import pandas as pd
+from app.core.iqr import iqr_bounds, outlier_mask
 
 from app.core.dtype_utils import stringy_columns
 from app.engines.profiling_engine import _is_date_column
@@ -142,7 +143,7 @@ def compute_correlation(df: pd.DataFrame) -> dict:
     numeric_cols = _numeric_columns(df)
     truncated_note = ""
     if len(numeric_cols) > MAX_CORRELATION_COLUMNS:
-        # Keep the highest-variance columns — they're the ones most likely to
+        # Keep the highest-variance columns â€” they're the ones most likely to
         # carry a real linear relationship worth looking at.
         variances = df[numeric_cols].var().sort_values(ascending=False)
         numeric_cols = variances.head(MAX_CORRELATION_COLUMNS).index.tolist()
@@ -151,7 +152,7 @@ def compute_correlation(df: pd.DataFrame) -> dict:
 
     if len(numeric_cols) < 2:
         return {"columns": numeric_cols, "matrix": [], "top_pairs": [],
-                "note": truncated_note + "Fewer than 2 numeric columns — nothing to correlate."}
+                "note": truncated_note + "Fewer than 2 numeric columns â€” nothing to correlate."}
 
     corr = df[numeric_cols].corr(method="pearson")
     matrix = [[None if pd.isna(v) else round(float(v), 3) for v in row] for row in corr.values]
@@ -170,7 +171,7 @@ def compute_correlation(df: pd.DataFrame) -> dict:
         "columns": numeric_cols,
         "matrix": matrix,
         "top_pairs": pairs[:8],
-        "note": truncated_note + "Pearson correlation measures linear relationships only — "
+        "note": truncated_note + "Pearson correlation measures linear relationships only â€” "
                 "two columns can be strongly (non-linearly) related and still show a low value here.",
     }
 
@@ -208,7 +209,7 @@ def compute_missing_patterns(df: pd.DataFrame) -> dict:
         "co_missing_pairs": co_missing_pairs[:10],
         "missing_by_row_bucket": buckets,
         "note": "co_missing_ratio is the Jaccard overlap of missingness between two columns (rows missing "
-                "both / rows missing either) — a high ratio suggests the same rows/records are affected, "
+                "both / rows missing either) â€” a high ratio suggests the same rows/records are affected, "
                 "not that the columns cause each other to be missing.",
     }
 
@@ -310,4 +311,111 @@ def compute_time_analysis(df: pd.DataFrame, column: str) -> dict:
         "column": column, "granularity": granularity, "buckets": buckets,
         "note": f"Auto-selected {granularity} buckets based on a {span_days}-day span "
                 f"({parsed.min().date().isoformat()} to {parsed.max().date().isoformat()}).",
+    }
+
+
+def profile_dataset(
+    df: pd.DataFrame,
+    max_categories: int = 10,
+    max_correlations: int = 15,
+) -> dict:
+    """Calculate verified dataset statistics without modifying the DataFrame."""
+
+    if not isinstance(df, pd.DataFrame):
+        raise ValueError("Expected a pandas DataFrame.")
+
+    if df.empty:
+        raise ValueError("Cannot profile an empty dataset.")
+
+    numeric_df = df.select_dtypes(include="number")
+    categorical_df = df.select_dtypes(
+        include=["object", "category", "string", "bool"]
+    )
+
+    numeric_summary = {}
+
+    for column in numeric_df.columns:
+        series = numeric_df[column].dropna()
+
+        if series.empty:
+            continue
+
+        q1 = float(series.quantile(0.25))
+        q3 = float(series.quantile(0.75))
+        iqr = q3 - q1
+
+        numeric_summary[str(column)] = {
+            "count": int(series.count()),
+            "mean": float(series.mean()),
+            "median": float(series.median()),
+            "std": float(series.std()) if len(series) > 1 else 0.0,
+            "min": float(series.min()),
+            "q1": q1,
+            "q3": q3,
+            "max": float(series.max()),
+            "outlier_count": int(outlier_mask(series, iqr_bounds(series)).sum()),  # shared IQR policy
+        }
+
+    categorical_summary = {}
+
+    for column in categorical_df.columns:
+        series = df[column].dropna()
+        if series.empty:
+            continue
+
+        categorical_summary[str(column)] = {
+            "unique_count": int(series.nunique()),
+            "top_values": {
+                str(key): int(value)
+                for key, value in series.value_counts().head(
+                    max_categories
+                ).items()
+            },
+        }
+
+    missing = {
+        str(column): int(count)
+        for column, count in df.isna().sum().items()
+        if count > 0
+    }
+
+    correlations = []
+
+    if len(numeric_df.columns) >= 2:
+        corr = numeric_df.corr()
+
+        for i, col_a in enumerate(corr.columns):
+            for col_b in corr.columns[i + 1:]:
+                value = corr.loc[col_a, col_b]
+
+                if pd.notna(value):
+                    correlations.append({
+                        "column_a": str(col_a),
+                        "column_b": str(col_b),
+                        "correlation": round(float(value), 4),
+                    })
+
+    correlations.sort(
+        key=lambda item: abs(item["correlation"]),
+        reverse=True,
+    )
+
+    return {
+        "dataset_overview": {
+            "rows": int(len(df)),
+            "columns": int(len(df.columns)),
+            "numeric_columns": int(len(numeric_df.columns)),
+            "categorical_columns": int(len(categorical_df.columns)),
+            "duplicate_rows": int(df.duplicated().sum()),
+            "total_missing_values": int(df.isna().sum().sum()),
+            "column_types": {
+                str(column): str(dtype)
+                for column, dtype in df.dtypes.items()
+            },
+        },
+        "numeric_summary": numeric_summary,
+        "categorical_summary": categorical_summary,
+        "missing_values": missing,
+        "top_correlations": correlations[:max_correlations],
+        "read_only": True,
     }
