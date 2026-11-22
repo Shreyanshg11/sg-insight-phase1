@@ -1,3 +1,5 @@
+from io import BytesIO
+import re
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from app.core.session_store import store
@@ -5,6 +7,7 @@ from app.models.schemas import (
     VersionListResponse, VersionSummary, VersionCompareResponse, RestoreVersionResponse
 )
 from app.engines.versioning_engine import compare_versions
+from app.core.proposal_store import dataset_lock
 
 router = APIRouter(prefix="/api/dataset", tags=["versioning"])
 
@@ -48,29 +51,42 @@ async def compare_dataset_versions(dataset_id: str, a: int = Query(...), b: int 
 
 
 @router.post("/{dataset_id}/versions/{version_number}/restore", response_model=RestoreVersionResponse)
-async def restore_version(dataset_id: str, version_number: int):
-    session = _get_session(dataset_id)
-    success = session.restore_to(version_number)
-    if not success:
-        raise HTTPException(status_code=400,
-                             detail=f"Invalid version {version_number} — this dataset has versions "
-                                    f"1..{session.version_number}.")
-    return RestoreVersionResponse(dataset_id=dataset_id, current_version=session.version_number, success=True)
+def restore_version(dataset_id: str, version_number: int):
+    with dataset_lock(dataset_id):
+        session = _get_session(dataset_id)
+        success = session.restore_to(version_number)
+        if not success:
+            raise HTTPException(status_code=400,
+                                 detail=f"Invalid version {version_number} — this dataset has versions "
+                                        f"1..{session.version_number}.")
+        return RestoreVersionResponse(dataset_id=dataset_id, current_version=session.version_number, success=True)
 
 
 @router.get("/{dataset_id}/versions/{version_number}/export")
-async def export_version(dataset_id: str, version_number: int):
+async def export_version(dataset_id: str, version_number: int, format: str = Query("csv")):
     session = _get_session(dataset_id)
     if not (1 <= version_number <= session.version_number):
         raise HTTPException(status_code=400,
-                             detail=f"Invalid version {version_number} — this dataset has versions "
-                                    f"1..{session.version_number}.")
+                            detail=f"Invalid version {version_number} — this dataset has versions "
+                                   f"1..{session.version_number}.")
+    if format not in {"csv", "xlsx"}:
+        raise HTTPException(status_code=400, detail="Export format must be csv or xlsx.")
     df = session.versions[version_number - 1]
-    csv_content = df.to_csv(index=False)
-    base_name = session.filename.rsplit(".", 1)[0] if "." in session.filename else session.filename
-    filename = f"{base_name}_v{version_number}.csv"
+    raw_base = session.filename.rsplit(".", 1)[0] if "." in session.filename else session.filename
+    base_name = re.sub(r"[^A-Za-z0-9._-]+", "_", raw_base).strip("._") or "dataset"
+    if format == "xlsx":
+        output = BytesIO()
+        try:
+            df.to_excel(output, index=False, engine="openpyxl")
+        except Exception:
+            raise HTTPException(status_code=500, detail="Could not generate the Excel export for this dataset.")
+        return Response(
+            content=output.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{base_name}_v{version_number}.xlsx"'},
+        )
     return Response(
-        content=csv_content,
+        content=df.to_csv(index=False),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="{base_name}_v{version_number}.csv"'},
     )

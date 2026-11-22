@@ -103,6 +103,12 @@ has_more_suggestions must indicate whether another reasonable recommendation is 
 """
 
 
+GROUPED_OPERATIONS = ("sum",)       # the only supported aggregation; a new one must be added here AND implemented below
+GROUPED_MAX_GROUP_COLUMNS = 3
+GROUPED_MAX_CATEGORIES = 50          # a group_by column must be categorical: at most this many distinct values
+GROUPED_MAX_GROUPS_REPORTED = 15
+
+
 def _get_tools_and_dispatch(df, goal_keywords, investigation_goal):
     """Return Ollama-compatible tool definitions and read-only dispatch."""
 
@@ -227,6 +233,78 @@ def _get_tools_and_dispatch(df, goal_keywords, investigation_goal):
             ],
         }
 
+    def get_grouped_aggregation(tool_input):
+        """Read-only: SUM of a numeric column per group of one or more categorical columns. Never changes df."""
+        value_col = tool_input.get("value_column")
+        group_cols = tool_input.get("group_by")
+        raw_operation = tool_input.get("operation")
+        operation = "sum" if raw_operation is None else str(raw_operation).strip().lower()
+
+        if operation not in GROUPED_OPERATIONS:
+            return {"error": f"Unsupported operation '{raw_operation}'. Supported operations: {', '.join(GROUPED_OPERATIONS)}."}
+        if not isinstance(value_col, str):
+            return {"error": "value_column must be the name of a numeric column."}
+        if isinstance(group_cols, str):
+            group_cols = [group_cols]
+        if not isinstance(group_cols, list) or not group_cols or not all(isinstance(c, str) for c in group_cols):
+            return {"error": "group_by must be a non-empty list of column names."}
+        if len(group_cols) > GROUPED_MAX_GROUP_COLUMNS:
+            return {"error": f"group_by accepts at most {GROUPED_MAX_GROUP_COLUMNS} columns (got {len(group_cols)})."}
+        if len(set(group_cols)) != len(group_cols):
+            return {"error": "group_by lists the same column more than once."}
+        for col in [value_col, *group_cols]:
+            if col not in df.columns:
+                return {"error": f"No column named '{col}' in this dataset."}
+        if value_col in group_cols:
+            return {"error": f"'{value_col}' is the value column and cannot also be a group_by column."}
+        values = df[value_col]
+        if values.dtype.kind not in "iuf":                # same numeric test as get_column_stats; booleans and text are rejected
+            return {"error": f"'{value_col}' is not a numeric column (dtype {values.dtype}); sum needs a numeric column."}
+        for col in group_cols:
+            distinct = int(df[col].nunique())
+            if distinct > GROUPED_MAX_CATEGORIES:
+                return {"error": f"'{col}' has {distinct} distinct values; group_by needs a categorical column "
+                                 f"with at most {GROUPED_MAX_CATEGORIES}."}
+
+        numbers = values.astype("float64").replace([float("inf"), float("-inf")], float("nan"))
+        keys = [df[col] for col in group_cols]
+        usable = numbers.notna()                       # rows with a finite value AND no missing group key
+        for key in keys:
+            usable &= key.notna()
+        grouped = numbers[usable].reset_index(drop=True).groupby(
+            [key[usable].reset_index(drop=True) for key in keys], sort=False, observed=True)
+        totals, counts = grouped.sum(), grouped.size()
+
+        def plain(value):                              # JSON-safe group label
+            value = value.item() if hasattr(value, "item") else value
+            return value if value is None or isinstance(value, (str, int, float, bool)) else str(value)
+
+        rows = []
+        for key, total, count in zip(totals.index, totals.to_numpy(), counts.to_numpy()):
+            key = key if isinstance(key, tuple) else (key,)
+            rows.append({"group": {col: plain(v) for col, v in zip(group_cols, key)},
+                         "sum": round(float(total), 6), "row_count": int(count)})
+        rows.sort(key=lambda r: (-r["sum"], [str(r["group"][c]) for c in group_cols]))   # largest first, ties by label
+        grand_total = round(float(numbers[usable].sum()), 6)
+        if abs(grand_total) == float("inf") or any(abs(r["sum"]) == float("inf") for r in rows):
+            return {"error": "A sum overflowed: the values are too large to add."}
+
+        used = int(usable.sum())
+        shown = min(len(rows), GROUPED_MAX_GROUPS_REPORTED)
+        return {
+            "operation": operation,
+            "value_column": value_col,
+            "group_by": group_cols,
+            "total_groups": len(rows),
+            "groups_shown": shown,
+            "truncated": len(rows) > shown,
+            "rows_total": int(len(df)),
+            "rows_used": used,
+            "rows_excluded": int(len(df)) - used,      # missing/non-finite value or missing group key
+            "grand_total": grand_total,
+            "groups": rows[:shown],
+        }
+
     tool_definitions = [
         (
             "get_session_summary",
@@ -275,6 +353,23 @@ def _get_tools_and_dispatch(df, goal_keywords, investigation_goal):
                 "required": ["column"],
             },
         ),
+        (
+            "get_grouped_aggregation",
+            "Read-only grouped aggregation: the SUM of a numeric column grouped by one or more categorical columns "
+            "(at most 3 group columns, each with at most 50 distinct values). Returns groups sorted by sum (largest "
+            "first) with a row count per group, plus rows used and excluded (rows with a missing value or missing "
+            "group key are excluded and counted). Labels are returned exactly as stored: labels that differ by case, "
+            "spaces or spelling are separate groups. Use it for questions like 'total X by Y'. Only the operation 'sum' is supported.",
+            {
+                "type": "object",
+                "properties": {
+                    "value_column": {"type": "string", "description": "Numeric column to sum."},
+                    "group_by": {"type": "array", "items": {"type": "string"}, "description": "1 to 3 categorical column names."},
+                    "operation": {"type": "string", "enum": ["sum"]},
+                },
+                "required": ["value_column", "group_by"],
+            },
+        ),
     ]
 
     tools = [
@@ -304,6 +399,7 @@ def _get_tools_and_dispatch(df, goal_keywords, investigation_goal):
         "get_analysis_recommendations": get_analysis_recommendations,
         "get_outlier_analysis": get_outlier_analysis,
         "get_column_stats": get_column_stats,
+        "get_grouped_aggregation": get_grouped_aggregation,
     }
 
     return tools, dispatch
@@ -377,14 +473,25 @@ def _parse_final_response(final_text):
 # ran into the 180 s HTTP timeout. Everything below keeps the prompt small and the generation bounded WITHOUT
 # changing what the tools compute or weakening the grounding check (which now simply checks what the model saw).
 # ---------------------------------------------------------------------------
+class _OncePerEventHandler(logging.StreamHandler):
+    """Prints only when the root logger has no handler of its own. Records propagate to the root logger, so with a root
+    handler present (logging.basicConfig elsewhere, a different launcher) every event used to be printed twice."""
+
+    def emit(self, record):
+        if not logging.getLogger().handlers:
+            super().emit(record)
+
+
 logger = logging.getLogger("sg_insight.copilot")
 if not logging.getLogger("sg_insight").handlers:
-    _handler = logging.StreamHandler()
+    _handler = _OncePerEventHandler()
     _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logging.getLogger("sg_insight").addHandler(_handler)
     logging.getLogger("sg_insight").setLevel(os.environ.get("SG_INSIGHT_LOG_LEVEL", "INFO").upper())
 
 MAX_TOOL_STEPS = 6
+_TOOL_RETRY_NUDGE = ("Your last reply was cut off before it contained a tool call. Reply now with ONLY the tool call and no "
+                     "explanation; if no tool is needed, answer in one or two plain sentences.")
 TOOL_PHASE_MAX_TOKENS = 512        # a tool call is a few dozen tokens; this only stops runaway text
 FINAL_PHASE_MAX_TOKENS = 900       # a normal final JSON answer is a few hundred tokens
 TOOL_RESULT_MAX_CHARS = 3500       # per tool result (about 1k tokens)
@@ -451,6 +558,13 @@ def _compact_result(tool_name: str, result):
         while out["points"] and len(json.dumps(out, default=str)) > TOOL_RESULT_MAX_CHARS:
             out["points"] = out["points"][:-1]
             out["points_shown"] = len(out["points"])
+        return out
+    if tool_name == "get_grouped_aggregation" and isinstance(result, dict) and isinstance(result.get("groups"), list):
+        out = dict(result)
+        while out["groups"] and len(json.dumps(out, default=str)) > TOOL_RESULT_MAX_CHARS:
+            out["groups"] = out["groups"][:-1]
+            out["groups_shown"] = len(out["groups"])
+            out["truncated"] = True
         return out
     size = len(json.dumps(result, default=str))
     if size > TOOL_RESULT_MAX_CHARS:
@@ -565,6 +679,65 @@ def _render_outlier_report(o: dict) -> str:
     )
 
 
+_GROUPED_COMPANION_TOOLS = {"get_grouped_aggregation", "get_session_summary"}   # a turn that used only these gets the deterministic table
+_GROUPED_REQUIRED = ("value_column", "group_by", "groups", "total_groups", "groups_shown", "rows_total", "rows_used", "rows_excluded",
+                     "grand_total")
+
+
+def _valid_grouped_results(gathered_results: dict) -> list[dict]:
+    """Every well-formed get_grouped_aggregation result of this turn, in call order (errors and malformed ones are skipped)."""
+    return [r for r in gathered_results.get("get_grouped_aggregation", [])
+            if isinstance(r, dict) and "error" not in r and all(k in r for k in _GROUPED_REQUIRED)
+            and isinstance(r["groups"], list) and isinstance(r["group_by"], list)]
+
+
+def _label_variants(result: dict) -> list[list[str]]:
+    """Labels of one group column that differ only by letter case or surrounding spaces. Detection only: nothing is merged,
+    corrected or hidden (a spelling variant such as 'Electronic' vs 'Electronics' is NOT detected)."""
+    found = []
+    for col in result["group_by"]:
+        buckets = {}
+        for group in result["groups"]:
+            label = group.get("group", {}).get(col)
+            if isinstance(label, str):
+                buckets.setdefault(label.strip().casefold(), set()).add(label)
+        found.extend(sorted(labels) for labels in buckets.values() if len(labels) > 1)
+    return found
+
+
+def _fmt_number(value) -> str:
+    return f"{float(value):,.6f}".rstrip("0").rstrip(".")      # exactly the stored value (the tool rounds to 6 places)
+
+
+def _render_grouped_report(results: list[dict]) -> tuple[str, str]:
+    """Deterministic answer for grouped sums: every figure and every group-to-value pairing is copied from the tool result, labels
+    exactly as stored. Returns (reply, claims_text). claims_text is the same text with each data label / column name replaced by
+    '~', so the numeric grounding check judges the FIGURES and not digits that happen to sit inside a label such as 'Zone 12'."""
+    def build(show) -> str:
+        blocks = []
+        for g in results:
+            cols = g["group_by"]
+            lines = [f"### Sum of {show(g['value_column'])} by {', '.join(show(c) for c in cols)}", "",
+                     "| " + " | ".join([show(c) for c in cols] + [f"Sum of {show(g['value_column'])}", "Rows"]) + " |",
+                     "|" + "---|" * len(cols) + "---:|---:|"]
+            for group in g["groups"]:
+                lines.append("| " + " | ".join([show(group["group"].get(c)) for c in cols]
+                                               + [_fmt_number(group["sum"]), str(group["row_count"])]) + " |")
+            lines += ["", f"**Total {show(g['value_column'])}:** {_fmt_number(g['grand_total'])} across {g['rows_used']} rows used "
+                          f"({g['rows_excluded']} of {g['rows_total']} rows excluded: missing value or missing group label)."]
+            if g.get("truncated"):
+                lines.append(f"Showing the {g['groups_shown']} largest of {g['total_groups']} groups; the remaining groups are not listed.")
+            variants = _label_variants(g)
+            if variants:
+                lines.append("**Labels that differ only by letter case or spaces are separate groups here and were not merged:** "
+                             + "; ".join(" / ".join(f"'{show(label)}'" for label in labels) for labels in variants[:5]) + ".")
+            blocks.append("\n".join(lines))
+        return "\n\n".join(blocks) + ("\n\nLabels are shown exactly as stored (not merged or corrected). This is a read-only "
+                                       "calculation; no dataset changes were made.")
+
+    return (build(lambda s: str(s).replace("|", "\\|").replace("\n", " ")), build(lambda s: "~"))
+
+
 async def send_message(
     df,
     goal_keywords,
@@ -596,6 +769,8 @@ async def send_message(
     gathered_results = {}
     draft_response = ""
     tool_chars_used = 0
+    turn_id, llm_calls, tool_executions, length_retry_used = os.urandom(4).hex(), 0, 0, False
+    logger.info("copilot turn %s start: message_chars=%d history_messages=%d", turn_id, len(message), len(history or []))
 
     # PHASE 1: Allow Ollama to call tools.
     for step in range(1, MAX_TOOL_STEPS + 1):
@@ -620,6 +795,7 @@ async def send_message(
                 f"Copilot generation failed: {exc}"
             ) from exc
 
+        llm_calls += 1
         assistant_message = response.get("message", {})
 
         if not isinstance(assistant_message, dict):
@@ -628,6 +804,19 @@ async def send_message(
             )
 
         tool_calls = assistant_message.get("tool_calls") or []
+
+        # A reply cut off by the token limit carries no usable tool call: retry once with a stricter instruction instead of
+        # moving on to the final answer without the data.
+        if not tool_calls and response.get("done_reason") == "length":
+            logger.warning("copilot turn %s tool step %d hit the %d-token limit without a tool call", turn_id, step, TOOL_PHASE_MAX_TOKENS)
+            if length_retry_used:
+                raise RuntimeError(
+                    f"Copilot couldn't produce a tool call: the model's reply was cut off at {TOOL_PHASE_MAX_TOKENS} tokens twice. "
+                    "Rephrase the question more specifically (name the columns), or use a larger model."
+                )
+            length_retry_used = True
+            messages.append({"role": "user", "content": _TOOL_RETRY_NUDGE})
+            continue
 
         # No more tool calls: move to final JSON generation.
         if not tool_calls:
@@ -660,6 +849,14 @@ async def send_message(
                     f"Copilot tool '{tool_name}' failed: {exc}"
                 ) from exc
 
+            tool_executions += 1
+            outcome = "ok"
+            if isinstance(result, dict) and "error" in result:
+                outcome = "error: " + _clip(str(result.get("error")), 120)
+            elif tool_name == "get_grouped_aggregation" and isinstance(result, dict):
+                outcome = "groups=%s rows_used=%s/%s truncated=%s" % (result.get("total_groups"), result.get("rows_used"),
+                                                                      result.get("rows_total"), result.get("truncated"))
+            logger.info("copilot turn %s tool %s args=%s -> %s", turn_id, tool_name, _clip(json.dumps(tool_input, default=str), 300), outcome)
             compact = _compact_result(tool_name, result)
             content = json.dumps(compact, default=str)
             if tool_chars_used + len(content) > TOOL_TOTAL_MAX_CHARS:
@@ -681,6 +878,7 @@ async def send_message(
         )
 
     valid_outlier = _latest_valid_outlier(gathered_results)
+    grounding_text = None          # set only by the deterministic grouped report (its labels are masked, figures are not)
 
     if valid_outlier is not None:
         # Deterministic, verified outlier report (it always replaced the model's text). No second model call.
@@ -689,13 +887,20 @@ async def send_message(
             "proposed_action": None,
             "has_more_suggestions": False,
         }
+    elif _valid_grouped_results(gathered_results) and set(gathered_results) <= _GROUPED_COMPANION_TOOLS:
+        # Deterministic table: exact tool-result figures, each group paired with its own value, labels exactly as stored.
+        reply, grounding_text = _render_grouped_report(_valid_grouped_results(gathered_results))
+        parsed = {"reply": reply, "proposed_action": None, "has_more_suggestions": False}
     else:
+        llm_calls += 1
         parsed = await _final_answer(messages, draft_response, gathered_results)
 
     unverified = _check_grounding(
-        [parsed["reply"]],
+        [grounding_text if grounding_text is not None else parsed["reply"]],
         gathered_results,
     )
+    logger.info("copilot turn %s done: llm_calls=%d tool_executions=%d tools=%s unverified_figures=%d", turn_id, llm_calls,
+                tool_executions, sorted(gathered_results), len(unverified))
 
     return {
         "reply": parsed["reply"],

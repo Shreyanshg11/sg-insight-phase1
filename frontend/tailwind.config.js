@@ -16,7 +16,7 @@ export default {
           100: "#ECEAE5",
           300: "#C7C9CE",
           500: "#8B8F98",
-          700: "#5A5F68",
+          700: "#858A93",
         },
         signal: {
           amber: "#E8A33D",

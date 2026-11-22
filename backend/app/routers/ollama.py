@@ -49,5 +49,5 @@ async def _ollama_status() -> dict:
 
 @router.get("/status")
 async def get_ollama_status():
-    """Provider-aware status (Ollama locally, Anthropic on Render). Never includes the API key."""
+    """Return local Ollama connectivity and configured model availability."""
     return await llm_client.provider_status(_ollama_status)

@@ -4,14 +4,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# System libs some wheels fall back to building against (matplotlib/scipy on
-# platforms with no prebuilt wheel) — cheap to include, avoids a flaky build.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# constraints.txt pins every runtime dependency to the versions the test suite ran against (reproducible builds).
+COPY requirements.txt constraints.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -c constraints.txt
 
 COPY app ./app
 
@@ -19,7 +14,10 @@ COPY app ./app
 # lives here by default. Mount a volume at this path for real persistence —
 # see the Deployment section in README.md.
 ENV SG_INSIGHT_DATA_DIR=/app/data
-RUN mkdir -p /app/data
+RUN useradd --system --uid 10001 --create-home appuser \
+    && mkdir -p /app/data \
+    && chown -R appuser:appuser /app/data
+USER 10001:10001
 
 # Render (and most PaaS hosts) inject $PORT at runtime; default 8000 keeps
 # `docker run` / docker-compose working the same as local `uvicorn --reload`.

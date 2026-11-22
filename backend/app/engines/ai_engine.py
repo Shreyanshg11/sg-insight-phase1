@@ -219,9 +219,9 @@ async def generate_insight(
             f"{local_prefix()}AI generation failed: {exc}"
         ) from exc
 
-    except Exception as exc:
+    except Exception:
         raise RuntimeError(
-            f"AI insight generation failed: {exc}"
+            "AI insight generation failed because the local model returned an unexpected response."
         ) from exc
 
     message = result_response.get("message", {})

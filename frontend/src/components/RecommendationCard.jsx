@@ -343,7 +343,7 @@ export default function RecommendationCard({ recommendation, onConfirm, onDismis
       {hasOtherPreviewFields && (
         <div className="mt-3 rounded border border-graphite-border bg-graphite-900 p-3">
           <p className="mb-1 font-mono text-[11px] uppercase tracking-wider text-ink-500">Details</p>
-          <pre className="overflow-x-auto font-mono text-xs text-ink-300">
+          <pre className="max-w-full whitespace-pre-wrap break-words font-mono text-xs text-ink-300">
             {JSON.stringify(recommendation.preview, null, 2)}
           </pre>
         </div>

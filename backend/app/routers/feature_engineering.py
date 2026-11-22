@@ -1,10 +1,12 @@
 from fastapi import APIRouter, HTTPException
-from app.core.session_store import store, ActionLogEntry
+from app.core.session_store import store, ActionLogEntry, DatasetResourceLimitError
 from app.models.schemas import (
     FeatureEngineeringResponse, FeatureRecommendation,
     ApplyFeatureActionRequest, ApplyFeatureActionResponse,
 )
 from app.engines.feature_engineering_engine import generate_feature_recommendations, apply_feature_action
+from app.core.proposal_store import dataset_lock
+from app.core.persistence import StorageCapacityError
 
 router = APIRouter(prefix="/api/dataset", tags=["feature_engineering"])
 
@@ -24,7 +26,7 @@ async def get_feature_recommendations(dataset_id: str):
 
 
 @router.post("/feature-action", response_model=ApplyFeatureActionResponse)
-async def apply_feature_action_endpoint(req: ApplyFeatureActionRequest):
+def apply_feature_action_endpoint(req: ApplyFeatureActionRequest):
     """
     Called ONLY after the user has seen the preview/reason/confidence and clicked
     confirm on the frontend — same contract as /apply-action for cleaning. Every
@@ -36,6 +38,11 @@ async def apply_feature_action_endpoint(req: ApplyFeatureActionRequest):
 
 def apply_feature_sync(req: ApplyFeatureActionRequest) -> ApplyFeatureActionResponse:
     """The single feature-mutation path (synchronous; see apply_cleaning_sync)."""
+    with dataset_lock(req.dataset_id):
+        return _apply_feature_locked(req)
+
+
+def _apply_feature_locked(req: ApplyFeatureActionRequest) -> ApplyFeatureActionResponse:
     session = _get_session(req.dataset_id)
     try:
         new_df, preview = apply_feature_action(
@@ -55,7 +62,12 @@ def apply_feature_sync(req: ApplyFeatureActionRequest) -> ApplyFeatureActionResp
         reason=req.reason, confidence=req.confidence, params=req.params,
         rows_affected=len(new_df), result_summary=result_summary,
     )
-    session.push_version(new_df, log_entry)
+    try:
+        session.push_version(new_df, log_entry)
+    except DatasetResourceLimitError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except StorageCapacityError as exc:
+        raise HTTPException(status_code=507, detail=str(exc)) from exc
 
     return ApplyFeatureActionResponse(
         dataset_id=req.dataset_id,

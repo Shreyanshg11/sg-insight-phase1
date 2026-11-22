@@ -97,6 +97,7 @@ export default function VersionHistory({ datasetId, versions, currentVersion, on
               >
                 Export CSV
               </a>
+              <a href={exportVersionUrl(datasetId, v.version, "xlsx")} download className="rounded border border-graphite-border px-2 py-1 font-mono text-[11px] text-ink-300 hover:bg-graphite-700">Export XLSX</a>
               {v.version !== currentVersion && (
                 confirmingRestore === v.version ? (
                   <>

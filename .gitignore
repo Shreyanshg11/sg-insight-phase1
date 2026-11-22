@@ -7,3 +7,6 @@ dist/
 .env
 *.log
 backend/data/
+.pytest_cache/
+*.zip
+.DS_Store

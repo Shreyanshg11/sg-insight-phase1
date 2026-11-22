@@ -27,7 +27,11 @@ import json
 import os
 import pickle
 import sqlite3
+import shutil
+import tempfile
+import threading
 import uuid
+from functools import wraps
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +44,26 @@ import pandas as pd
 DATA_DIR = Path(os.environ.get("SG_INSIGHT_DATA_DIR", Path(__file__).resolve().parents[2] / "data"))
 DB_PATH = DATA_DIR / "sessions.db"
 VERSIONS_DIR = DATA_DIR / "versions"
+_STORAGE_LOCK = threading.RLock()
+MIN_FREE_DISK_BYTES = int(os.getenv("SG_INSIGHT_MIN_FREE_DISK_MB", "100")) * 1024 * 1024
+
+
+class StorageCapacityError(RuntimeError):
+    """Persistent storage is too close to its configured safety floor."""
+
+
+def _ensure_capacity(required_bytes: int = 0) -> None:
+    free_bytes = shutil.disk_usage(DATA_DIR).free
+    if free_bytes < MIN_FREE_DISK_BYTES + max(0, required_bytes):
+        raise StorageCapacityError("Persistent storage is low. Create a backup or free disk space before continuing.")
+
+
+def storage_locked(function):
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with _STORAGE_LOCK:
+            return function(*args, **kwargs)
+    return wrapped
 
 
 def _ensure_dirs():
@@ -89,6 +113,14 @@ def init_db():
                 PRIMARY KEY (dataset_id, version_index)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS revoked_sessions (
+                session_id TEXT PRIMARY KEY,
+                expires_at INTEGER NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_revoked_sessions_expiry ON revoked_sessions(expires_at)")
+    ensure_schema()  # additive migrations (last-activity column) for databases created by any earlier version
 
 
 def _validated_dataset_id(dataset_id: str) -> str:
@@ -111,7 +143,8 @@ def _version_path(dataset_id: str, version_number: int) -> Path:
     return VERSIONS_DIR / dataset_id / f"v{version_number}.pkl"
 
 
-def save_session(session) -> None:
+@storage_locked
+def save_session(session, *, write_current_version: bool = False) -> None:
     """
     Upserts everything about `session`: metadata, the full action log
     (small — cheap to rewrite wholesale each time), and any version
@@ -127,11 +160,21 @@ def save_session(session) -> None:
     existing_numbers = {int(p.stem[1:]) for p in session_dir.glob("v*.pkl")}
     current_numbers = set(range(1, session.version_number + 1))
 
-    for n in current_numbers - existing_numbers:
-        with open(_version_path(session.dataset_id, n), "wb") as f:
+    # Publish complete version files atomically before metadata can reference them.
+    versions_to_write = current_numbers - existing_numbers
+    if write_current_version:
+        versions_to_write.add(session.version_number)
+    if versions_to_write:
+        required = sum(int(session.versions[n - 1].memory_usage(index=True, deep=True).sum()) for n in versions_to_write)
+        _ensure_capacity(required)
+    for n in versions_to_write:
+        destination = _version_path(session.dataset_id, n)
+        with tempfile.NamedTemporaryFile(dir=session_dir, prefix=f".v{n}-", suffix=".tmp", delete=False) as f:
+            temporary = Path(f.name)
             pickle.dump(session.versions[n - 1], f, protocol=pickle.HIGHEST_PROTOCOL)
-    for n in existing_numbers - current_numbers:
-        _version_path(session.dataset_id, n).unlink(missing_ok=True)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, destination)
 
     with _connect() as conn:
         conn.execute(
@@ -171,7 +214,16 @@ def save_session(session) -> None:
                 ),
             )
 
+    # Remove versions only after the new authoritative count is committed.
+    for n in existing_numbers - current_numbers:
+        try:
+            _version_path(session.dataset_id, n).unlink(missing_ok=True)
+        except OSError:
+            # Stale versions are safe orphans; readiness and future backups can report them.
+            pass
 
+
+@storage_locked
 def load_session_data(dataset_id: str) -> Optional[dict]:
     """
     Returns a plain dict shaped for `session_store.py` to rebuild a
@@ -197,8 +249,11 @@ def load_session_data(dataset_id: str) -> Optional[dict]:
                 f"Session {dataset_id} is missing its version {n} file on disk ({path}) — "
                 f"the data/ directory may have been partially deleted."
             )
-        with open(path, "rb") as f:
-            versions.append(pickle.load(f))
+        try:
+            with open(path, "rb") as f:
+                versions.append(pickle.load(f))
+        except Exception as exc:
+            raise RuntimeError(f"Stored dataset version {n} is corrupt and could not be loaded.") from exc
 
     log = [
         {
@@ -218,3 +273,73 @@ def load_session_data(dataset_id: str) -> Optional[dict]:
         "versions": versions,
         "log": log,
     }
+
+
+@storage_locked
+def check_storage() -> None:
+    """Check SQLite integrity and confirm every indexed version is present."""
+    with _connect() as conn:
+        result = conn.execute("PRAGMA quick_check").fetchone()[0]
+        if result != "ok":
+            raise RuntimeError("SQLite storage failed its integrity check")
+        rows = conn.execute("SELECT dataset_id, version_count FROM sessions").fetchall()
+    for row in rows:
+        dataset_id = _validated_dataset_id(row["dataset_id"])
+        count = int(row["version_count"])
+        if count < 1:
+            raise RuntimeError("Stored session has an invalid version count")
+        for number in range(1, count + 1):
+            path = _version_path(dataset_id, number)
+            if not path.is_file() or path.stat().st_size == 0:
+                raise RuntimeError(f"Stored dataset version {number} is missing or empty")
+    if shutil.disk_usage(DATA_DIR).free < MIN_FREE_DISK_BYTES:
+        raise RuntimeError("Persistent storage is below its configured free-space reserve")
+
+
+_DATASET_SCOPED_TABLES = ("copilot_proposals", "recommendation_status", "recommendation_events")
+
+
+@storage_locked
+def ensure_schema() -> None:
+    """Additive migration: last-activity column used by idle cleanup. Idempotent; never touches revoked_sessions."""
+    with _connect() as conn:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(sessions)")}
+        if cols and "touched_at" not in cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN touched_at TEXT")
+
+
+@storage_locked
+def touch(dataset_id: str) -> None:
+    dataset_id = _validated_dataset_id(dataset_id)
+    ensure_schema()
+    with _connect() as conn:
+        conn.execute("UPDATE sessions SET touched_at = ? WHERE dataset_id = ?",
+                     (datetime.now(timezone.utc).isoformat(), dataset_id))
+
+
+@storage_locked
+def list_activity() -> list[tuple[str, str]]:
+    """[(dataset_id, last_activity_iso)] oldest first; last activity falls back to creation time."""
+    ensure_schema()
+    with _connect() as conn:
+        rows = conn.execute("SELECT dataset_id, COALESCE(touched_at, created_at) AS last FROM sessions ORDER BY last").fetchall()
+    return [(r["dataset_id"], r["last"]) for r in rows]
+
+
+@storage_locked
+def delete_session(dataset_id: str) -> bool:
+    """Remove one dataset's rows (session, log, proposals, recommendation history) and every version file.
+    Authentication state (revoked_sessions) is deliberately never touched. True if anything existed."""
+    dataset_id = _validated_dataset_id(dataset_id)
+    session_dir = VERSIONS_DIR / dataset_id
+    existed = session_dir.exists()
+    with _connect() as conn:
+        removed = conn.execute("DELETE FROM sessions WHERE dataset_id = ?", (dataset_id,)).rowcount
+        conn.execute("DELETE FROM log_entries WHERE dataset_id = ?", (dataset_id,))
+        present = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        for table in _DATASET_SCOPED_TABLES:
+            if table in present:
+                conn.execute(f"DELETE FROM {table} WHERE dataset_id = ?", (dataset_id,))
+    if existed:
+        shutil.rmtree(session_dir, ignore_errors=True)
+    return existed or removed > 0

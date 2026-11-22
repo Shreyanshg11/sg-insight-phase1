@@ -2,14 +2,12 @@
 #
 # This Dockerfile is for a generic Docker/Compose self-host. On Render
 # specifically, the frontend deploys as a native static site instead (see
-# render.yaml + README's Deployment section) — Render's static hosting is
-# free and never spins down, unlike running this same nginx image as a web
-# service would be, so it's the better fit there. This image is still useful
-# for local docker-compose parity and any other host that wants one container
-# per service.
+# render.yaml + README's Deployment section), so this image is not used there.
+# It is still useful for local docker-compose parity and any other host that
+# wants one container per service.
 
 # ---- build stage ----
-FROM node:20-slim AS build
+FROM node:22-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci

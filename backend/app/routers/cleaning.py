@@ -1,11 +1,13 @@
 from fastapi import APIRouter, HTTPException, Query
-from app.core.session_store import store, ActionLogEntry
+from app.core.session_store import store, ActionLogEntry, DatasetResourceLimitError
 from app.models.schemas import (
     ApplyActionRequest, ApplyActionResponse, UndoResponse, HistoryResponse, HistoryEntry,
     CompareMethodsResponse
 )
 from app.engines.cleaning_engine import apply_action, compare_missing_value_methods
 from app.core.action_policy import is_review_only
+from app.core.proposal_store import dataset_lock
+from app.core.persistence import StorageCapacityError
 
 router = APIRouter(prefix="/api/dataset", tags=["cleaning"])
 
@@ -58,7 +60,7 @@ def _summarize(step: str, action: str, column: str | None, preview: dict) -> tup
 
 
 @router.post("/apply-action", response_model=ApplyActionResponse)
-async def apply_cleaning_action(req: ApplyActionRequest):
+def apply_cleaning_action(req: ApplyActionRequest):
     """
     Called ONLY after the user has seen the preview/reason/confidence and clicked
     confirm on the frontend. This endpoint performs the actual mutation and pushes
@@ -70,6 +72,11 @@ async def apply_cleaning_action(req: ApplyActionRequest):
 def apply_cleaning_sync(req: ApplyActionRequest) -> ApplyActionResponse:
     """The single cleaning-mutation path. Synchronous on purpose so the Copilot
     confirm endpoint can run it inside its per-dataset lock."""
+    with dataset_lock(req.dataset_id):
+        return _apply_cleaning_locked(req)
+
+
+def _apply_cleaning_locked(req: ApplyActionRequest) -> ApplyActionResponse:
     session = _get_session(req.dataset_id)
     if is_review_only(req.action):
         # Informational recommendations (e.g. outlier flag_for_review) never change data. Refuse before
@@ -89,7 +96,12 @@ def apply_cleaning_sync(req: ApplyActionRequest) -> ApplyActionResponse:
         reason=req.reason, confidence=req.confidence, params=req.params,
         rows_affected=rows_affected, result_summary=result_summary,
     )
-    session.push_version(new_df, log_entry)
+    try:
+        session.push_version(new_df, log_entry)
+    except DatasetResourceLimitError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except StorageCapacityError as exc:
+        raise HTTPException(status_code=507, detail=str(exc)) from exc
 
     return ApplyActionResponse(
         dataset_id=req.dataset_id,
@@ -113,10 +125,11 @@ async def compare_methods(dataset_id: str, column: str = Query(...)):
 
 
 @router.post("/{dataset_id}/undo", response_model=UndoResponse)
-async def undo_last_action(dataset_id: str):
-    session = _get_session(dataset_id)
-    success = session.undo()
-    return UndoResponse(dataset_id=dataset_id, version=session.version_number, success=success)
+def undo_last_action(dataset_id: str):
+    with dataset_lock(dataset_id):
+        session = _get_session(dataset_id)
+        success = session.undo()
+        return UndoResponse(dataset_id=dataset_id, version=session.version_number, success=success)
 
 
 @router.get("/{dataset_id}/history", response_model=HistoryResponse)
