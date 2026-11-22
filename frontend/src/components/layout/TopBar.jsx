@@ -1,3 +1,6 @@
+import { useState } from "react";
+import { useOperatorAuth } from "../authContext";
+
 function Badge({ children, tone = "default" }) {
   const tones = {
     default: "border-graphite-border text-ink-300",
@@ -34,7 +37,13 @@ export default function TopBar({
   dataset, currentVersion, qualityScore, warningCount, goal, onUndo, canUndo,
   onToggleNav, onToggleAside,
 }) {
+  const { enabled, signOut } = useOperatorAuth();
+  const [authError, setAuthError] = useState("");
   const scoreTone = qualityScore == null ? "default" : qualityScore >= 80 ? "green" : qualityScore >= 60 ? "amber" : "red";
+  const handleSignOut = async () => {
+    setAuthError("");
+    try { await signOut(); } catch (error) { setAuthError(error.message || "Could not sign out."); }
+  };
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-graphite-border bg-graphite-900 px-3 py-3 sm:px-6">
@@ -61,10 +70,13 @@ export default function TopBar({
         >
           Undo
         </button>
+        {enabled && <button onClick={handleSignOut} aria-describedby={authError ? "signout-error" : undefined}
+          className="rounded border border-graphite-border px-3 py-1 font-mono text-xs text-ink-300 hover:bg-graphite-700 focus-visible:outline-none">Sign out</button>}
         <IconButton onClick={onToggleAside} label="Toggle session context panel">
           <span aria-hidden="true" className="font-mono text-sm">i</span>
         </IconButton>
       </div>
+      {authError && <span id="signout-error" role="alert" className="w-full text-right text-xs text-red-300">{authError}</span>}
     </div>
   );
 }

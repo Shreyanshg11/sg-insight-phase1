@@ -34,7 +34,7 @@ globalThis.fetch = async (url, opts = {}) => {
 };
 const post = (p) => log.filter((r) => r.method === "POST" && r.url.includes(p));
 
-const { mount } = require(WORK + "/bundle.cjs");
+const { mount, mountCrash } = require(WORK + "/bundle.cjs");
 const api = async (path, opts) => (await realFetch(BASE + path, opts)).json();
 
 // ---- upload a real dataset to the real backend
@@ -132,6 +132,29 @@ const clean = await (await realFetch(BASE + "/api/dataset/upload", { method: "PO
 unmount(); container.innerHTML = ""; unmount = mount(container, clean); await openCleaning();
 await waitFor(() => /No recommendations available|All recommendations dismissed|Cleaning recommendations \(0/.test(text()), "clean empty state");
 check("clean dataset shows 'No recommendations available' (not 'all dismissed')", /No recommendations available/.test(text()) && !/All recommendations dismissed/.test(text()), text().slice(0, 0));
+await waitFor(() => btn(/^Machine Learning$/), "Machine Learning navigation");
+click(btn(/^Machine Learning$/));
+await waitFor(() => { const b = btn(/^Train and evaluate$/); return /Train and evaluate a model/.test(text()) && b && !b.disabled; }, "supervised model workspace");
+check("machine learning workspace is reachable", /Train and evaluate a model/.test(text()));
+click(btn(/^Train and evaluate$/));
+await waitFor(() => /Evaluation complete/.test(text()), "held-out regression evaluation", 15000);
+check("regression evaluation reports held-out metrics", /rmse/i.test(text()) && /held-out rows/.test(text()));
+check("held-out predictions are shown", /Held-out predictions/.test(text()));
+check("cross-validation is reported next to the holdout metrics", /5-fold cross-validation on the training rows \(r2\)/.test(text()));
+click(btn(/^Report$/));
+await waitFor(() => /Smart Report Builder/.test(text()) && /regression_model/.test(text()), "model run in report workspace", 15000);
+check("model evaluation can be included in a report", /regression_model/.test(text()));
+
+// A render crash is contained by the error boundary (no blank page)
+unmount(); container.innerHTML = "";
+{
+  const origError = console.error; console.error = () => {};
+  unmount = mountCrash(container);
+  await waitFor(() => /Something went wrong/.test(text()), "error boundary message");
+  console.error = origError;
+  check("render crash shows a recoverable message with a Reload button", !!btn(/^Reload$/) && !!container.querySelector('[role="alert"]'));
+}
+
 unmount();
 console.log(failures === 0 ? "\nALL UI CHECKS PASSED" : `\n${failures} UI CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

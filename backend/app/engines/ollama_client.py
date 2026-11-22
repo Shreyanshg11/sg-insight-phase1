@@ -72,14 +72,12 @@ async def ollama_chat(
 
     except httpx.HTTPStatusError as exc:
         raise OllamaError(
-            f"Ollama returned HTTP {exc.response.status_code}: "
-            f"{exc.response.text[:500]}"
+            f"Ollama returned HTTP {exc.response.status_code}. Check the local Ollama service logs for details."
         ) from exc
 
     except httpx.RequestError as exc:
         raise OllamaError(
-            f"Cannot connect to Ollama at {OLLAMA_BASE_URL}. "
-            "Make sure Ollama is running."
+            "Cannot connect to the configured Ollama service. Check OLLAMA_BASE_URL and make sure the service is running."
         ) from exc
 
     except (ValueError, json.JSONDecodeError) as exc:

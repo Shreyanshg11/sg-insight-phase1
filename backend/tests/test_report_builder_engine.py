@@ -100,10 +100,7 @@ def _draft(df, available=None, user_request=None):
 
 class TestDraftReportPlan:
 
-    def test_does_not_require_anthropic_api_key(
-        self, monkeypatch, df
-    ):
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    def test_uses_local_ollama(self, monkeypatch, df):
 
         _install_fake_ollama(
             monkeypatch,

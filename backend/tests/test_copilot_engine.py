@@ -96,10 +96,7 @@ def _send(df, message="Analyze my dataset.", history=None):
 
 class TestSendMessage:
 
-    def test_does_not_require_anthropic_api_key(
-        self, monkeypatch, messy_df
-    ):
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    def test_uses_local_ollama(self, monkeypatch, messy_df):
 
         _install_fake_ollama(
             monkeypatch,
@@ -411,7 +408,7 @@ class TestToolDispatch:
             for item in tools
         }
 
-        assert len(tool_names) == 7
+        assert len(tool_names) == 8
         assert "get_outlier_analysis" in tool_names
         assert tool_names == set(dispatch.keys())
 

@@ -3,23 +3,47 @@
 # nginx's reverse proxy (see frontend/nginx.conf) — no CORS involved here.
 #
 # This is NOT what's used for the Render deployment described in the
-# README's Deployment section — Render's own static-site hosting replaces
-# this frontend container there (free, never spins down, no nginx needed).
+# README's Deployment section (there the frontend is a static site on a custom
+# domain in the same site as the API, see "Render and the authentication cookie").
 # This compose file is for anyone who wants to run/self-host both services
 # as containers directly.
 services:
   backend:
     build:
       context: ./backend
-    ports:
-      - "8000:8000"
+    # `expose`, not `ports`: the backend is reachable only from other containers on the compose network,
+    # never from the host or a public network. nginx (frontend) is the single published entry point.
+    expose:
+      - "8000"
+    networks:
+      - sgnet
     environment:
-      - OLLAMA_BASE_URL=http://host.docker.internal:11434
-      - OLLAMA_MODEL=qwen2.5:3b
-      - CORS_ORIGINS=http://localhost:8080
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:3b}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8080}
       - SG_INSIGHT_DATA_DIR=/app/data
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - SG_INSIGHT_AUTH_PASSWORD_HASH=${SG_INSIGHT_AUTH_PASSWORD_HASH:-}
+      - SG_INSIGHT_SESSION_SECRET=${SG_INSIGHT_SESSION_SECRET:-}
+      - SG_INSIGHT_COOKIE_SECURE=${SG_INSIGHT_COOKIE_SECURE:-false}
+      # Per-client rate limits behind nginx. The backend code defaults to NOT trusting forwarded headers; this
+      # compose topology opts in because nginx has a fixed address (below), overwrites X-Real-IP, and is the only
+      # container that can reach the backend. Only that address is believed; everyone else's header is ignored.
+      - SG_INSIGHT_TRUST_PROXY=${SG_INSIGHT_TRUST_PROXY:-true}
+      - SG_INSIGHT_TRUSTED_PROXIES=${SG_INSIGHT_TRUSTED_PROXIES:-172.28.0.10}
+      # Opt-in idle-dataset cleanup. 0 (default) = never delete anything. Take a backup before enabling.
+      - SG_INSIGHT_SESSION_TTL_HOURS=${SG_INSIGHT_SESSION_TTL_HOURS:-0}
+      - SG_INSIGHT_MAX_SESSIONS=${SG_INSIGHT_MAX_SESSIONS:-0}
     volumes:
       - sg-insight-data:/app/data
+    mem_limit: 2g
+    cpus: 2.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/readyz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
 
   frontend:
@@ -29,9 +53,19 @@ services:
         VITE_API_URL: ""  # empty = same-origin; nginx proxies /api/* to backend
     ports:
       - "8080:80"
+    networks:
+      sgnet:
+        ipv4_address: 172.28.0.10   # must match SG_INSIGHT_TRUSTED_PROXIES
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
+
+networks:
+  sgnet:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
 
 volumes:
   # Named volume, not a bind mount — survives `docker compose down` (but not

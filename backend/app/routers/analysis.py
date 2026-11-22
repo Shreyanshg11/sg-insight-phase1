@@ -8,6 +8,8 @@ from app.models.schemas import (
 from app.engines.analysis_engine import recommend_analyses, run_analysis
 from app.engines.ai_engine import generate_insight, generate_dataset_intelligence
 from app.engines.eda_engine import profile_dataset
+from app.engines.ml_engine import recommend_models as recommend_ml_models, train_model
+from app.models.schemas import TrainModelRequest, TrainModelResponse, ModelRecommendationResponse
 
 router = APIRouter(prefix="/api/dataset", tags=["analysis"])
 
@@ -17,6 +19,29 @@ def _get_session(dataset_id: str):
     if session is None:
         raise HTTPException(status_code=404, detail="Dataset not found. Upload a dataset first.")
     return session
+
+
+@router.get("/{dataset_id}/ml-recommendations", response_model=ModelRecommendationResponse)
+def get_ml_recommendations(dataset_id: str):
+    session = _get_session(dataset_id)
+    return ModelRecommendationResponse(
+        dataset_id=dataset_id,
+        recommendations=recommend_ml_models(session.current),
+    )
+
+
+@router.post("/train-model", response_model=TrainModelResponse)
+@limiter.limit("5/minute")
+def train_model_endpoint(request: Request, req: TrainModelRequest):
+    """Fit and evaluate a supervised model without modifying the dataset."""
+    session = _get_session(req.dataset_id)
+    try:
+        outcome = train_model(
+            session.current, req.task, req.target, req.features, req.model_type, req.test_size,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return TrainModelResponse(dataset_id=req.dataset_id, **outcome)
 
 
 @router.get("/{dataset_id}/analysis-recommendations", response_model=AnalysisRecommendationResponse)

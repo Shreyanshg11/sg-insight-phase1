@@ -7,6 +7,7 @@ export const PIPELINE_STAGES = [
   { key: "feature_engineering", label: "Feature Engineering", implemented: true },
   { key: "eda", label: "EDA", implemented: true },
   { key: "analysis", label: "Analysis", implemented: true },
+  { key: "machine_learning", label: "Machine Learning", implemented: true },
   { key: "visualization", label: "Visualization", implemented: true },
   { key: "dashboard", label: "Dashboard", implemented: true },
   { key: "report", label: "Report", implemented: true },

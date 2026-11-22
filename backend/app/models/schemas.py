@@ -469,6 +469,45 @@ class DatasetIntelligenceResponse(BaseModel):
     model: str
 
 
+# ---------- Supervised machine learning ----------
+
+class TrainModelRequest(BaseModel):
+    dataset_id: str
+    task: str                 # classification | regression
+    target: str
+    features: List[str]
+    model_type: str           # random_forest | logistic_regression | linear_regression
+    test_size: float = 0.2
+
+
+class TrainModelResponse(BaseModel):
+    dataset_id: str
+    task: str
+    target: str
+    features: List[str]
+    model_type: str
+    metrics: Dict[str, Any]
+    cross_validation: Optional[Dict[str, Any]] = None
+    train_rows: int
+    test_rows: int
+    feature_importance: List[Dict[str, Any]] = []
+    predictions: List[Dict[str, Any]] = []
+    limitations: List[str] = []
+
+
+class ModelRecommendation(BaseModel):
+    task: str
+    target_candidates: List[str]
+    feature_candidates: List[str]
+    recommended_models: List[str]
+    notes: List[str] = []
+
+
+class ModelRecommendationResponse(BaseModel):
+    dataset_id: str
+    recommendations: List[ModelRecommendation]
+
+
 # ---------- Visualization + Dashboard Builder (#16 / #17) ----------
 
 class ChartRecommendation(BaseModel):

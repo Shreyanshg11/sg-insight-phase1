@@ -19,10 +19,9 @@ def _install_fake_ollama(monkeypatch, response_text):
     monkeypatch.setattr(ai_engine, "ollama_chat", fake_chat)
 
 
-class TestGenerateInsightWithoutApiKey:
+class TestGenerateInsightWithLocalOllama:
     @pytest.mark.asyncio
-    async def test_no_anthropic_api_key_required(self, monkeypatch):
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    async def test_generates_insight_through_the_local_model(self, monkeypatch):
 
         response = json.dumps({
             "observation": "obs",

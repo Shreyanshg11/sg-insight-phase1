@@ -21,6 +21,7 @@ import ComingSoonPanel from "../components/layout/ComingSoonPanel";
 import FeatureEngineeringCenter from "../components/FeatureEngineeringCenter";
 import EDAWorkspace from "../components/EDAWorkspace";
 import AnalysisWorkspace from "../components/analysis/AnalysisWorkspace";
+import MLWorkspace from "../components/ml/MLWorkspace";
 import VisualizationWorkspace from "../components/charts/VisualizationWorkspace";
 import DashboardWorkspace from "../components/dashboard/DashboardWorkspace";
 import ReportWorkspace from "../components/report/ReportWorkspace";
@@ -40,7 +41,7 @@ const SORT_OPTIONS = [
 
 const STAGE_LABELS = {
   profile: "Profile", quality: "Quality", cleaning: "Cleaning",
-  feature_engineering: "Feature Engineering", eda: "EDA", analysis: "Analysis",
+  feature_engineering: "Feature Engineering", eda: "EDA", analysis: "Analysis", machine_learning: "Machine Learning",
   visualization: "Visualization", dashboard: "Dashboard", report: "Report",
 };
 
@@ -276,6 +277,9 @@ export default function WorkbenchPage({ dataset }) {
     }
     if (activeStage === "analysis") {
       return <AnalysisWorkspace datasetId={dataset.dataset_id} investigationGoal={goal} onAnalysisCompleted={handleAnalysisCompleted} />;
+    }
+    if (activeStage === "machine_learning") {
+      return <MLWorkspace datasetId={dataset.dataset_id} onModelCompleted={handleAnalysisCompleted} />;
     }
     if (activeStage === "visualization") {
       return <VisualizationWorkspace datasetId={dataset.dataset_id} />;

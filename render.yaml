@@ -1,39 +1,46 @@
 # Render Blueprint — see README.md's Deployment section for the full guide.
 # https://render.com/docs/blueprint-spec
 #
-# Two services, both on the free tier:
+# Two services. The backend uses a paid single-instance plan with persistent storage;
+# this application is not safe for multi-instance scaling in its current architecture.
 #   - sg-insight-backend: Dockerized FastAPI service (backend/Dockerfile)
 #   - sg-insight-frontend: native static site (Render builds+hosts the Vite
 #     bundle directly — no Docker needed here, and unlike a web service,
 #     Render's static hosting is free and never spins down)
 #
-# IMPORTANT — free tier has no persistent disk (see README): the backend's
-# SQLite + pickle-file session data (session 5's work) resets on every
-# restart/redeploy on this plan. Fine for a portfolio demo; upgrade to a
-# paid plan and add a `disk:` block on the backend service for real
-# persistence across restarts.
 services:
   - type: web
     name: sg-insight-backend
     runtime: docker
-    plan: free
+    plan: standard
     rootDir: backend
     dockerfilePath: ./Dockerfile
-    healthCheckPath: /
+    healthCheckPath: /api/readyz
+    disk:
+      name: sg-insight-data
+      mountPath: /app/data
+      sizeGB: 1
     envVars:
-      # Must match the frontend static site's actual onrender.com URL below —
-      # update both if either service's assigned name/URL differs from what
-      # you set here.
-      - key: CORS_ORIGINS
-        value: https://sg-insight-frontend.onrender.com
-      # AI provider: Render uses the Anthropic API (local development uses Ollama - see README, "AI provider").
-      # ANTHROPIC_API_KEY is a secret: `sync: false` makes Render ask for it in the dashboard, so it is never stored here.
-      - key: AI_PROVIDER
-        value: anthropic
-      - key: ANTHROPIC_MODEL
-        value: claude-haiku-5-5
-      - key: ANTHROPIC_API_KEY
+      # AUTH COOKIE DESIGN: the session cookie is HttpOnly + Secure + SameSite=Strict (never relaxed).
+      # *.onrender.com subdomains are different "sites" to browsers, so a frontend on
+      # sg-insight-frontend.onrender.com can never send that cookie to sg-insight-backend.onrender.com.
+      # Use custom domains on ONE registrable domain, e.g. app.example.com (frontend) and
+      # api.example.com (backend): same site, so Strict cookies work with exact-origin CORS.
+      # Add both domains in the Render dashboard, then set the two values marked sync:false.
+      # The backend refuses to start if CORS_ORIGINS is an onrender.com URL.
+      - key: ENVIRONMENT
+        value: production
+      - key: CORS_ORIGINS          # exact frontend origin, e.g. https://app.example.com (no trailing slash)
         sync: false
+      - key: SG_INSIGHT_COOKIE_SECURE
+        value: "true"
+      - key: SG_INSIGHT_DATA_DIR
+        value: /app/data
+      - key: SG_INSIGHT_AUTH_PASSWORD_HASH
+        sync: false
+      - key: SG_INSIGHT_SESSION_SECRET
+        generateValue: true
+      # Configure OLLAMA_BASE_URL/OLLAMA_MODEL only when a private Ollama server is available.
 
   - type: web
     name: sg-insight-frontend
@@ -42,11 +49,10 @@ services:
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
     envVars:
-      # Vite inlines this at BUILD time — must be the backend's actual public
-      # URL, not a private-network address (the browser calls this directly).
-      # Update this and rebuild if the backend's assigned name/URL differs.
+      # Vite inlines this at BUILD time: the backend's custom-domain URL on the SAME registrable
+      # domain as this site, e.g. https://api.example.com (see AUTH COOKIE DESIGN above).
       - key: VITE_API_URL
-        value: https://sg-insight-backend.onrender.com
+        sync: false
     routes:
       # SPA fallback so a hard refresh on a deep route doesn't 404.
       - type: rewrite

@@ -8,12 +8,23 @@ add/remove) writes straight through to disk, and a session missing from the
 in-memory cache is lazily loaded from disk on first access — so restarting
 the backend process doesn't lose datasets, only the in-memory cache of them.
 """
+import logging
+import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 import re
 import pandas as pd
 import uuid
+import os
+
+
+MAX_SESSION_VERSIONS = 100
+MAX_SESSION_MEMORY_BYTES = int(os.getenv("SG_INSIGHT_MAX_SESSION_MEMORY_MB", "768")) * 1024 * 1024
+
+
+class DatasetResourceLimitError(ValueError):
+    """A dataset session would exceed configured memory/history limits."""
 
 from app.core import persistence
 
@@ -62,8 +73,8 @@ class DatasetSession:
     log: List[ActionLogEntry] = field(default_factory=list)
     pinned_charts: List[dict] = field(default_factory=list)  # Dashboard Builder (#17) chart specs
 
-    def _persist(self):
-        persistence.save_session(self)
+    def _persist(self, write_current_version: bool = False):
+        persistence.save_session(self, write_current_version=write_current_version)
 
     @property
     def current(self) -> pd.DataFrame:
@@ -74,17 +85,34 @@ class DatasetSession:
         return len(self.versions)  # V1 = original, V2 = first cleaning action, ...
 
     def push_version(self, df: pd.DataFrame, log_entry: ActionLogEntry):
+        if self.version_number >= MAX_SESSION_VERSIONS:
+            raise DatasetResourceLimitError(f"A dataset can retain at most {MAX_SESSION_VERSIONS} versions.")
+        estimated = sum(int(version.memory_usage(index=True, deep=True).sum()) for version in self.versions)
+        estimated += int(df.memory_usage(index=True, deep=True).sum())
+        if estimated > MAX_SESSION_MEMORY_BYTES:
+            limit_mb = MAX_SESSION_MEMORY_BYTES // (1024 * 1024)
+            raise DatasetResourceLimitError(f"Dataset version history exceeds the {limit_mb}MB memory limit. Export or undo older work before continuing.")
         self.versions.append(df)
         self.log.append(log_entry)
-        self._persist()
+        try:
+            self._persist(write_current_version=True)
+        except Exception:
+            self.versions.pop()
+            self.log.pop()
+            raise
 
     def undo(self) -> bool:
         if len(self.versions) <= 1:
             return False
-        self.versions.pop()
-        if self.log:
-            self.log.pop()
-        self._persist()
+        removed_version = self.versions.pop()
+        removed_log = self.log.pop() if self.log else None
+        try:
+            self._persist()
+        except Exception:
+            self.versions.append(removed_version)
+            if removed_log is not None:
+                self.log.append(removed_log)
+            raise
         return True
 
     def restore_to(self, version_number: int) -> bool:
@@ -95,18 +123,32 @@ class DatasetSession:
         phase per the brief."""
         if version_number < 1 or version_number > self.version_number:
             return False
+        old_versions, old_log = self.versions, self.log
         self.versions = self.versions[:version_number]
         self.log = self.log[:version_number - 1]
-        self._persist()
+        try:
+            self._persist()
+        except Exception:
+            self.versions, self.log = old_versions, old_log
+            raise
         return True
 
     def add_pinned_chart(self, spec: dict):
         self.pinned_charts.append(spec)
-        self._persist()
+        try:
+            self._persist()
+        except Exception:
+            self.pinned_charts.pop()
+            raise
 
     def remove_pinned_chart(self, chart_id: str):
-        self.pinned_charts = [c for c in self.pinned_charts if c["id"] != chart_id]
-        self._persist()
+        old_charts = self.pinned_charts
+        self.pinned_charts = [c for c in old_charts if c["id"] != chart_id]
+        try:
+            self._persist()
+        except Exception:
+            self.pinned_charts = old_charts
+            raise
 
     def is_goal_relevant(self, column_name: str) -> bool:
         """Cheap, explainable relevance check: does the column name literally
@@ -121,9 +163,53 @@ class DatasetSession:
 
 
 class SessionStore:
+    TOUCH_INTERVAL_SECONDS = 60
+    MIN_IDLE_HOURS = 1  # a session used within the last hour is never purged, whatever the configuration
+
     def __init__(self):
         self._sessions: Dict[str, DatasetSession] = {}
+        self._last_touch: Dict[str, float] = {}
         persistence.init_db()
+        persistence.ensure_schema()
+
+    def _touch(self, dataset_id: str) -> None:
+        now = time.monotonic()
+        if now - self._last_touch.get(dataset_id, -1e9) >= self.TOUCH_INTERVAL_SECONDS:
+            self._last_touch[dataset_id] = now
+            try:
+                persistence.touch(dataset_id)
+            except Exception:  # activity bookkeeping must never break a request
+                logging.getLogger("sg_insight.sessions").exception("touch failed")
+
+    def delete(self, dataset_id: str) -> bool:
+        """Delete a dataset everywhere (memory and disk). True if it existed."""
+        if self.get(dataset_id) is None:
+            return False
+        self._sessions.pop(dataset_id, None)
+        self._last_touch.pop(dataset_id, None)
+        persistence.delete_session(dataset_id)
+        return True
+
+    def purge(self, ttl_hours: float = 0, max_sessions: int = 0) -> int:
+        """Delete datasets idle longer than ttl_hours and, beyond max_sessions, the least recently used.
+        0 disables a rule (the default), so nothing is ever removed unless an operator opts in."""
+        activity = persistence.list_activity()
+        doomed: list[str] = []
+        if ttl_hours and ttl_hours > 0:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=max(float(ttl_hours), self.MIN_IDLE_HOURS))
+            doomed += [d for d, last in activity if datetime.fromisoformat(last) < cutoff]
+        remaining = [d for d, _ in activity if d not in set(doomed)]
+        if max_sessions and max_sessions > 0 and len(remaining) > max_sessions:
+            floor = datetime.now(timezone.utc) - timedelta(hours=self.MIN_IDLE_HOURS)
+            excess = remaining[: len(remaining) - int(max_sessions)]
+            doomed += [d for d in excess if datetime.fromisoformat(dict(activity)[d]) < floor]
+        removed = 0
+        for d in doomed:
+            self._sessions.pop(d, None)
+            self._last_touch.pop(d, None)
+            if persistence.delete_session(d):
+                removed += 1
+        return removed
 
     def create(self, filename: str, df: pd.DataFrame, investigation_goal: Optional[str] = None) -> DatasetSession:
         dataset_id = str(uuid.uuid4())
@@ -134,7 +220,11 @@ class SessionStore:
             versions=[df],
         )
         self._sessions[dataset_id] = session
-        session._persist()  # write-through immediately, so even an un-touched upload survives a restart
+        try:
+            session._persist(write_current_version=True)  # write-through immediately, so even an un-touched upload survives a restart
+        except Exception:
+            self._sessions.pop(dataset_id, None)
+            raise
         return session
 
     def get(self, dataset_id: str) -> Optional[DatasetSession]:
@@ -147,6 +237,7 @@ class SessionStore:
             return None
 
         if dataset_id in self._sessions:
+            self._touch(dataset_id)
             return self._sessions[dataset_id]
 
         loaded = persistence.load_session_data(dataset_id)
@@ -163,6 +254,7 @@ class SessionStore:
             pinned_charts=loaded["pinned_charts"],
         )
         self._sessions[dataset_id] = session
+        self._touch(dataset_id)
         return session
 
     def require(self, dataset_id: str) -> DatasetSession:
