@@ -80,6 +80,115 @@ class TestGenerateInsightGrounding:
         assert len(insight["unverified_figures"]) > 0
 
     @pytest.mark.asyncio
+    async def test_sum_computed_from_source_but_missing_from_result_is_flagged(self, monkeypatch):
+        import pandas as pd
+
+        source = pd.DataFrame({"revenue": [2, 4, 5, 9]})
+        assert int(source["revenue"].sum()) == 20
+        # The source contains this sum, but the deterministic result sent to the model omits it.
+        result_data = {
+            "count": len(source),
+            "mean": float(source["revenue"].mean()),
+            "min": int(source["revenue"].min()),
+            "max": int(source["revenue"].max()),
+        }
+        response_json = json.dumps({
+            "observation": "The dataset contains 4 observations with a total revenue sum of 20.",
+            "evidence": "2, 5.0, 9",
+            "business_meaning": "The average is $5.0, with a minimum of $2 and maximum of $9.",
+            "possible_explanations": [], "limitations": [], "confidence": 0.7,
+        })
+        _install_fake_ollama(monkeypatch, response_json)
+
+        insight = await ai_engine.generate_insight("summary", ["revenue"], result_data)
+
+        assert insight["grounded"] is False
+        assert [item["figure"] for item in insight["unverified_figures"]] == ["20"]
+
+    @pytest.mark.asyncio
+    async def test_same_sum_claim_is_grounded_when_result_includes_its_provenance(self, monkeypatch):
+        import pandas as pd
+
+        source = pd.DataFrame({"revenue": [2, 4, 5, 9]})
+        result_data = {
+            "count": len(source), "mean": float(source["revenue"].mean()),
+            "min": int(source["revenue"].min()), "max": int(source["revenue"].max()),
+            "sum": int(source["revenue"].sum()),
+        }
+        response_json = json.dumps({
+            "observation": "The dataset contains 4 observations with a total revenue sum of 20.",
+            "evidence": "2, 5.0, 9",
+            "business_meaning": "The average is $5.0, with a minimum of $2 and maximum of $9.",
+            "possible_explanations": [], "limitations": [], "confidence": 0.7,
+        })
+        _install_fake_ollama(monkeypatch, response_json)
+
+        insight = await ai_engine.generate_insight("summary", ["revenue"], result_data)
+
+        assert insight["grounded"] is True
+        assert insight["unverified_figures"] == []
+
+    @pytest.mark.asyncio
+    async def test_numeric_provenance_is_the_result_json_not_summary_prose(self, monkeypatch):
+        _install_fake_ollama(monkeypatch, json.dumps({
+            "observation": "The total is 20.", "evidence": "Total 20.",
+            "business_meaning": "Review the total.", "possible_explanations": [],
+            "limitations": [], "confidence": 0.5,
+        }))
+        insight = await ai_engine.generate_insight(
+            "summary", ["revenue"], {"count": 4},
+            deterministic_summary="The source sum is 20.",
+        )
+        assert insight["grounded"] is False
+        assert [item["figure"] for item in insight["unverified_figures"]] == ["20", "20"]
+
+    @pytest.mark.asyncio
+    async def test_result_values_reach_model_without_recalculation(self, monkeypatch):
+        result_data = {"correlation": 0.875, "rows_used": 1_000}
+        captured = {}
+
+        async def fake_chat(messages, **kwargs):
+            captured["messages"] = messages
+            return _fake_ollama_response(json.dumps({
+                "observation": "Correlation is 0.875 across 1,000 rows.",
+                "evidence": "0.875; 1,000", "business_meaning": "Association only.",
+                "possible_explanations": [], "limitations": [], "confidence": 0.6,
+            }))
+
+        monkeypatch.setattr(ai_engine, "ollama_chat", fake_chat)
+        insight = await ai_engine.generate_insight("correlation", ["x", "y"], result_data)
+        prompt = captured["messages"][1]["content"]
+        result_json = prompt.split("ANALYSIS RESULT (JSON):\n", 1)[1]
+
+        assert json.loads(result_json) == result_data
+        assert insight["grounded"] is True
+
+    def test_formatting_is_accepted_but_out_of_precision_rounding_is_not(self):
+        assert ai_engine._check_grounding(
+            ["R-squared 0.8700 across 1,000 rows (87%)."],
+            {"r_squared": 0.87, "n_rows": 1000, "percent": 87},
+        ) == []
+        assert ai_engine._check_grounding(
+            ["The p-value is 1e-05."], {"p_value": 1e-5}
+        ) == []
+        assert ai_engine._check_grounding(
+            ["The p-value is 2e-05."], {"p_value": 1e-5}
+        )[0]["figure"] == "2e-05"
+        flagged = ai_engine._check_grounding(["R-squared 0.88."], {"r_squared": 0.875})
+        assert [item["figure"] for item in flagged] == ["0.88"]
+
+    def test_unsupported_small_numeric_claim_is_not_ignored(self):
+        flagged = ai_engine._check_grounding(
+            ["Revenue increased by 3%."], {"r_squared": 0.87}
+        )
+        assert [item["figure"] for item in flagged] == ["3%"]
+
+    def test_line_leading_small_numbered_list_markers_are_ignored(self):
+        assert ai_engine._check_grounding(
+            ["1. First finding.\n2) Second finding."], {}
+        ) == []
+
+    @pytest.mark.asyncio
     async def test_response_wrapped_in_markdown_fences_is_still_parsed(self, monkeypatch):
         result_data = {"r_squared": 0.5}
         raw = "```json\n" + json.dumps({
@@ -106,6 +215,18 @@ class TestGenerateInsightGrounding:
                 "regression", ["x"], {"r_squared": 0.5}
             )
 
+    @pytest.mark.asyncio
+    async def test_empty_model_response_raises_clear_error(self, monkeypatch):
+        _install_fake_ollama(monkeypatch, "  ")
+        with pytest.raises(RuntimeError, match="empty AI response"):
+            await ai_engine.generate_insight("regression", ["x"], {"r_squared": 0.5})
+
+    @pytest.mark.asyncio
+    async def test_json_object_missing_required_fields_is_rejected(self, monkeypatch):
+        _install_fake_ollama(monkeypatch, json.dumps({"observation": "No numeric claims."}))
+        with pytest.raises(RuntimeError, match="missing required fields"):
+            await ai_engine.generate_insight("regression", ["x"], {"r_squared": 0.5})
+
 
 class TestExtractNumbers:
     def test_extracts_integers_and_decimals(self):
@@ -118,6 +239,9 @@ class TestExtractNumbers:
 
     def test_no_numbers_returns_empty(self):
         assert ai_engine._extract_numbers("no numbers here at all") == []
+
+    def test_digits_inside_metric_identifiers_are_not_numeric_claims(self):
+        assert ai_engine._extract_numbers("Q1 is 0.25 and Q3 is 0.75") == ["0.25", "0.75"]
 
 
 def test_dataset_semantics_flags_unverified_column_outlier():
