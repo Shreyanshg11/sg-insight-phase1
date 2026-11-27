@@ -89,3 +89,11 @@ After Docker is installed, configure the required environment variables and run 
 5. Configure and verify the real Render service names, frontend origin, secrets, persistent disk, and private Ollama endpoint if hosted AI is required. Do not consider the service released until health, sign-in, upload, persistence, backup/restore, and rollback are verified on the deployed environment.
 6. Decide and document data retention/deletion operations and broaden accessibility/device coverage if required by the intended users.
 
+
+## Final integration update — 2026-11-28
+
+The grounding numeric validator now ignores only actual line-leading list markers, excludes digits embedded in identifiers such as Q1/Q3, and recognizes scientific notation. This prevents unsupported small values (for example, 3%) from being silently treated as list numbers while allowing supported rounding and exponent formatting. Tests also confirm deterministic result JSON remains the provenance source.
+
+Backend focused auth + grounding: **36 passed, 1 warning**. Full backend with the repository-pinned dependencies: **1,061 passed, 1 warning**. Frontend: **13 passed**, lint **0 errors / 6 warnings**, production build **passed**. Validation ran with Python 3.13.15 and Node 24.21.0; Python 3.12 / Node 22 were not available.
+
+The current Render design remains intact: custom same-site domains, exact-origin CORS, Secure/HttpOnly/SameSite=Strict cookies, persistent `/app/data`, and `/api/readyz`. Static-site security response headers now mirror `frontend/nginx.conf`. Blueprint YAML parsed successfully, but no Render dashboard/live service check occurred. Docker image/Compose checks are unverified because Docker is unavailable. No deployment occurred.

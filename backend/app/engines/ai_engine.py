@@ -10,6 +10,7 @@ from .ollama_client import OLLAMA_MODEL, OllamaError
 
 
 DEFAULT_MODEL = OLLAMA_MODEL
+_NUMBER_PATTERN = r"(?<![A-Za-z_])-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?%?(?![A-Za-z_])"
 
 SYSTEM_PROMPT = """You are an analysis-insight writer embedded in a data analytics tool
 called SG-Insight. A user has run a statistical analysis on their own dataset; you are
@@ -39,7 +40,18 @@ confidence must be a number between 0 and 1.
 
 def _extract_numbers(text: str) -> list[str]:
     """Extract standalone numeric tokens."""
-    return re.findall(r"-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?", text)
+    return re.findall(_NUMBER_PATTERN, text)
+
+
+def _is_numbered_list_marker(text: str, start: int, end: int, number: str) -> bool:
+    """Ignore small integers only when they are syntactic line-leading list markers."""
+    if not re.fullmatch(r"[0-5]", number):
+        return False
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", end)
+    prefix = text[line_start:start]
+    suffix = text[end:] if line_end == -1 else text[end:line_end]
+    return not prefix.strip() and re.match(r"\s*[.)]\s+", suffix) is not None
 
 
 def _flatten_numbers(value):
@@ -80,11 +92,12 @@ def _check_grounding(texts: list[str], result: dict) -> list[dict]:
     unverified = []
 
     for text in texts:
-        for token in _extract_numbers(text):
+        for match in re.finditer(_NUMBER_PATTERN, text):
+            token = match.group(0)
             bare = token.rstrip("%").replace(",", "")
 
             # Ignore small integers used as numbered-list markers.
-            if re.fullmatch(r"[0-5]\.?", bare):
+            if _is_numbered_list_marker(text, match.start(), match.end(), bare):
                 continue
 
             normalized = (

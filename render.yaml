@@ -53,6 +53,24 @@ services:
       # domain as this site, e.g. https://api.example.com (see AUTH COOKIE DESIGN above).
       - key: VITE_API_URL
         sync: false
+    # Static hosting does not use frontend/nginx.conf, so mirror its browser security
+    # headers here. Keep the service worker uncached to allow clients to receive updates.
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: Permissions-Policy
+        value: camera=(), microphone=(), geolocation=()
+      - path: /sw.js
+        name: Cache-Control
+        value: no-cache
     routes:
       # SPA fallback so a hard refresh on a deep route doesn't 404.
       - type: rewrite
